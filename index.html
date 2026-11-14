@@ -51,7 +51,7 @@ svg{width:100%;height:auto;display:block}
 <script>
 const KEY='fuelTracker.v1';
 let db=JSON.parse(localStorage.getItem(KEY)||'null')||{vehicles:[{id:'car',name:'Car',icon:'🚗'},{id:'bike',name:'Bike',icon:'🏍️'}],entries:[],settings:{}};
-let cg='month',tab='add',vid=db.vehicles[0].id,editId=null,period='month',last=[];
+let rv='all',rg='month',cg='month',tab='add',vid=db.vehicles[0].id,editId=null,period='month',last=[];
 const save=()=>{db.updated=Date.now();localStorage.setItem(KEY,JSON.stringify(db))};
 const $=s=>document.querySelector(s);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -71,7 +71,7 @@ function segments(id){
   const out=[];
   for(let i=1;i<es.length;i++){
     const km=es[i].odo-es[i-1].odo;
-    if(km>0)out.push({t:es[i].t,km,l:es[i-1].l});
+    if(km>0)out.push({t:es[i].t,km,l:es[i-1].l,amt:es[i-1].amt,fuel:es[i-1].fuel||FUELS[0],days:(new Date(es[i].t)-new Date(es[i-1].t))/864e5});
   }
   return out;
 }
@@ -102,28 +102,121 @@ function buckets(g){
   else{const ys=db.entries.map(e=>+e.t.slice(0,4));const y0=Math.min(now.getFullYear()-2,...ys);for(let y=y0;y<=now.getFullYear();y++)out.push({k:''+y,lb:''+y})}
   return out;
 }
-function chartHTML(id,g){
-  const v=veh(id),bs=buckets(g);
-  const key=t=>g==='week'?weekKey(t):g==='month'?t.slice(0,7):t.slice(0,4);
-  const acc={};
-  for(const sg of segments(id)){const k=key(sg.t);(acc[k]=acc[k]||{km:0,l:0});acc[k].km+=sg.km;acc[k].l+=sg.l}
-  const pts=bs.map(b=>acc[b.k]&&acc[b.k].l?acc[b.k].km/acc[b.k].l:null);
-  const top=Math.max(vmax(v),Math.ceil(Math.max(0,...pts.filter(x=>x!==null))));
-  const W=340,H=210,L=30,R=10,T=18,B=30,pw=W-L-R,ph=H-T-B;
-  const X=i=>L+(bs.length>1?i*pw/(bs.length-1):pw/2),Y=m=>T+ph-(m/top)*ph;
-  let svg=`<svg viewBox="0 0 ${W} ${H}"><defs><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff6b6b"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b6b" stop-opacity=".35"/><stop offset="1" stop-color="#ff6b6b" stop-opacity="0"/></linearGradient></defs>`;
-  const step=top<=30?5:10;
-  for(let m=0;m<=top;m+=step)svg+=`<line x1="${L}" x2="${W-R}" y1="${Y(m)}" y2="${Y(m)}" stroke="#ffffff1a"/><text x="${L-5}" y="${Y(m)+4}" font-size="10" fill="#a79fd6" text-anchor="end">${m}</text>`;
+const COLORS=['#ffb347','#8b5cf6','#22d3ee','#34d399','#ff6b6b','#f472b6'];
+const bkey=(g,t)=>g==='week'?weekKey(t):g==='month'?t.slice(0,7):t.slice(0,4);
+const niceStep=r=>{for(const n of [.1,.2,.5,1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000])if(n>=r)return n;return 100000};
+const compact=n=>n>=1000?+(n/1000).toFixed(1)+'k':Math.round(n);
+const svgOpen=()=>`<svg viewBox="0 0 340 210"><defs><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff6b6b"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b6b" stop-opacity=".35"/><stop offset="1" stop-color="#ff6b6b" stop-opacity="0"/></linearGradient></defs>`;
+function axes(bs,lo,hi,step,fmt,xs){
+  const W=340,H=210,L=34,R=10,T=18,B=30,ph=H-T-B,Y=m=>T+ph-((m-lo)/(hi-lo))*ph;
+  let o='';
+  for(let m=lo;m<=hi+1e-9;m+=step)o+=`<line x1="${L}" x2="${W-R}" y1="${Y(m)}" y2="${Y(m)}" stroke="#ffffff1a"/><text x="${L-5}" y="${Y(m)+4}" font-size="10" fill="#a79fd6" text-anchor="end">${fmt(m)}</text>`;
   const every=bs.length>8?2:1;
-  bs.forEach((b,i)=>{if(i%every===0||i===bs.length-1)svg+=`<text x="${X(i)}" y="${H-10}" font-size="9" fill="#a79fd6" text-anchor="middle">${b.lb}</text>`});
-  let run=[];const runs=[];pts.forEach((m,i)=>{if(m===null){if(run.length)runs.push(run);run=[]}else run.push([X(i),Y(m)])});if(run.length)runs.push(run);
-  for(const r of runs){
-    if(r.length>1){const d=r.map((q,i)=>(i?'L':'M')+q[0]+' '+q[1]).join(' ');
-      svg+=`<path d="${d} L${r[r.length-1][0]} ${Y(0)} L${r[0][0]} ${Y(0)}Z" fill="url(#ga)"/><path d="${d}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`}
-  }
-  pts.forEach((m,i)=>{if(m!==null)svg+=`<circle cx="${X(i)}" cy="${Y(m)}" r="4" fill="#fff" stroke="#ff6b6b" stroke-width="2"/><text x="${X(i)}" y="${Y(m)-8}" font-size="10" font-weight="700" fill="#34d399" text-anchor="middle">${f(m)}</text>`});
-  if(!pts.some(x=>x!==null))svg+=`<text x="${W/2}" y="${H/2}" font-size="12" fill="#a79fd6" text-anchor="middle">No mileage data yet</text>`;
+  bs.forEach((b,i)=>{if(i%every===0||i===bs.length-1)o+=`<text x="${xs(i)}" y="${H-10}" font-size="9" fill="#a79fd6" text-anchor="middle">${b.lb}</text>`});
+  return{o,Y};
+}
+// pts: value per bucket or null. opts: lo,hi,step,fmt,label
+function lineChart(bs,pts,{lo=0,hi,step,fmt=x=>f(x),label=fmt}){
+  const W=340,L=34,R=10,pw=W-L-R,X=i=>L+(bs.length>1?i*pw/(bs.length-1):pw/2);
+  const {o,Y}=axes(bs,lo,hi,step,fmt,X);
+  let svg=svgOpen()+o,run=[];const runs=[];
+  pts.forEach((m,i)=>{if(m===null){if(run.length)runs.push(run);run=[]}else run.push([X(i),Y(m)])});if(run.length)runs.push(run);
+  for(const r of runs)if(r.length>1){const d=r.map((q,i)=>(i?'L':'M')+q[0]+' '+q[1]).join(' ');
+    svg+=`<path d="${d} L${r[r.length-1][0]} ${Y(lo)} L${r[0][0]} ${Y(lo)}Z" fill="url(#ga)"/><path d="${d}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`}
+  pts.forEach((m,i)=>{if(m!==null)svg+=`<circle cx="${X(i)}" cy="${Y(m)}" r="4" fill="#fff" stroke="#ff6b6b" stroke-width="2"/><text x="${X(i)}" y="${Y(m)-8}" font-size="10" font-weight="700" fill="#34d399" text-anchor="middle">${label(m)}</text>`});
+  if(!pts.some(x=>x!==null))svg+=`<text x="170" y="105" font-size="12" fill="#a79fd6" text-anchor="middle">No data yet</text>`;
   return svg+'</svg>';
+}
+// series: [{name,color,vals[]}] stacked
+function barChart(bs,series,fmt){
+  const W=340,L=34,R=10,pw=W-L-R,n=bs.length,bw=Math.min(26,pw/n*.6),X=i=>L+pw/n*(i+.5);
+  const tot=bs.map((_,i)=>series.reduce((a,s)=>a+(s.vals[i]||0),0));
+  const mx=Math.max(...tot),step=niceStep((mx||1)/4),hi=Math.max(step,Math.ceil(mx/step)*step);
+  const {o,Y}=axes(bs,0,hi,step,fmt,X);
+  let svg=svgOpen()+o;
+  bs.forEach((_,i)=>{let base=0;series.forEach(s=>{const v=s.vals[i]||0;if(v>0){svg+=`<rect x="${X(i)-bw/2}" y="${Y(base+v)}" width="${bw}" height="${Y(base)-Y(base+v)}" rx="3" fill="${s.color}"/>`;base+=v}});
+    if(tot[i]>0)svg+=`<text x="${X(i)}" y="${Y(tot[i])-4}" font-size="9" font-weight="700" fill="#f4f1ff" text-anchor="middle">${fmt(tot[i])}</text>`});
+  if(!mx)svg+=`<text x="170" y="105" font-size="12" fill="#a79fd6" text-anchor="middle">No data yet</text>`;
+  svg+='</svg>';
+  if(series.length>1)svg+=`<p class="note">${series.map(s=>`<span style="color:${s.color}">●</span> ${s.name}`).join(' &nbsp; ')}</p>`;
+  return svg;
+}
+function chartHTML(id,g){
+  const bs=buckets(g),acc={};
+  for(const sg of segments(id)){const k=bkey(g,sg.t);(acc[k]=acc[k]||{km:0,l:0});acc[k].km+=sg.km;acc[k].l+=sg.l}
+  const pts=bs.map(b=>acc[b.k]&&acc[b.k].l?acc[b.k].km/acc[b.k].l:null);
+  const hi=Math.max(vmax(veh(id)),Math.ceil(Math.max(0,...pts.filter(x=>x!==null))));
+  return lineChart(bs,pts,{hi,step:hi<=30?5:10});
+}
+// ---------- Spends tab ----------
+const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T00:00';
+function prevRange(p){
+  const to=new Date(startOf(p)),from=new Date(to);
+  if(p==='week')from.setDate(from.getDate()-7);else if(p==='month')from.setMonth(from.getMonth()-1);else from.setFullYear(from.getFullYear()-1);
+  return[ymd(from),ymd(to)];
+}
+function periodTotals(ids,p){
+  const cur=stats(ids,p);if(p==='all')return{cur};
+  const [a,b]=prevRange(p);let cost=0,km=0;
+  for(const id of ids){
+    cost+=db.entries.filter(e=>e.v===id&&e.t>=a&&e.t<b).reduce((x,e)=>x+e.amt,0);
+    km+=segments(id).filter(s=>s.t>=a&&s.t<b).reduce((x,s)=>x+s.km,0);
+  }
+  return{cur,prev:{cost,km}};
+}
+const delta=(c,p)=>p>0?`<small style="color:${c>p?'#ff6b6b':'#34d399'}">${c>p?'▲':'▼'} ${Math.abs(Math.round((c-p)/p*100))}%</small>`:'';
+function splitRows(rows){
+  const tot=rows.reduce((a,x)=>a+x.v,0)||1;
+  return rows.filter(x=>x.v>0).map(x=>`<div style="margin:10px 0"><div class="item" style="border:0;padding:0"><span>${x.n}</span><b>${inr(x.v)} · ${Math.round(x.v/tot*100)}%</b></div><div style="height:8px;border-radius:6px;background:#150f35"><div style="height:8px;border-radius:6px;width:${x.v/tot*100}%;background:${x.c}"></div></div></div>`).join('')||'<p class="note">No data yet.</p>';
+}
+function reportsHTML(){
+  const ids=rv==='all'?db.vehicles.map(v=>v.id):[rv],bs=buckets(rg),gl={week:'weekly',month:'monthly',year:'yearly'}[rg];
+  const colorOf=id=>COLORS[db.vehicles.findIndex(v=>v.id===id)%COLORS.length];
+  const seriesFor=fn=>ids.map(id=>({name:veh(id).name,color:colorOf(id),vals:bs.map(b=>fn(id,b.k))}));
+  const spend=(id,k)=>db.entries.filter(e=>e.v===id&&bkey(rg,e.t)===k).reduce((a,e)=>a+e.amt,0);
+  const kms=(id,k)=>segments(id).filter(s=>bkey(rg,s.t)===k).reduce((a,s)=>a+s.km,0);
+  const allSeg=ids.flatMap(id=>segments(id));
+  const sumB=(arr,k,fld)=>arr.filter(s=>bkey(rg,s.t)===k).reduce((a,s)=>a+s[fld],0);
+  const cpkPts=bs.map(b=>{const km=sumB(allSeg,b.k,'km');return km?sumB(allSeg,b.k,'amt')/km:null});
+  const cpkVals=cpkPts.filter(x=>x!==null),cpkHi=cpkVals.length?Math.ceil(Math.max(...cpkVals)*1.2):1;
+  const allE=db.entries.filter(e=>ids.includes(e.v));
+  const pplPts=bs.map(b=>{const es=allE.filter(e=>bkey(rg,e.t)===b.k),l=es.reduce((a,e)=>a+e.l,0);return l?es.reduce((a,e)=>a+e.amt,0)/l:null});
+  const pv=pplPts.filter(x=>x!==null),pst=pv.length?niceStep((Math.max(...pv)-Math.min(...pv)||2)/3):1;
+  const plo=pv.length?Math.floor(Math.min(...pv)/pst)*pst-pst*0:0,phi=pv.length?Math.max(plo+pst*2,Math.ceil(Math.max(...pv)/pst)*pst+pst):1;
+  const milPts=bs.map(b=>{const l=sumB(allSeg,b.k,'l');return l?sumB(allSeg,b.k,'km')/l:null});
+  const mv=milPts.map((m,i)=>[m,bs[i].lb]).filter(x=>x[0]!==null);
+  const best=mv.length?mv.reduce((a,b)=>b[0]>a[0]?b:a):null,worst=mv.length?mv.reduce((a,b)=>b[0]<a[0]?b:a):null;
+  const bestFill=allSeg.length?allSeg.reduce((a,s)=>s.km/s.l>a.km/a.l?s:a):null;
+  const longest=allSeg.length?allSeg.reduce((a,s)=>s.km>a.km?s:a):null;
+  const withOdo=allE.filter(e=>e.odo>0).sort((a,b)=>a.t.localeCompare(b.t));
+  const span=withOdo.length>1?(new Date(withOdo.at(-1).t)-new Date(withOdo[0].t))/864e5:0;
+  const kmDay=span>0?(withOdo.at(-1).odo-withOdo[0].odo)/span:NaN;
+  const fuels={};for(const s of allSeg){const x=fuels[s.fuel]=fuels[s.fuel]||{km:0,l:0,amt:0};x.km+=s.km;x.l+=s.l;x.amt+=s.amt}
+  const dt=new Date;
+  const totals=['week','month','year','all'].map(p=>{const {cur,prev}=periodTotals(ids,p),n={week:'This week',month:'This month',year:'This year',all:'Overall'}[p];
+    return `<div class="stat"><small>${n}</small><span>${inr(cur.cost)}</span> ${prev?delta(cur.cost,prev.cost):''}<br><small>${f(cur.km,0)} km${prev?' · prev '+inr(prev.cost):''}</small></div>`}).join('');
+  const vchips=`<div class="chips"><button class="chip ${rv==='all'?'on':''}" onclick="rv='all';render()">All</button>${db.vehicles.map(v=>`<button class="chip ${v.id===rv?'on':''}" onclick="rv='${v.id}';render()">${v.icon} ${v.name}</button>`).join('')}</div>`;
+  const gchips=`<div class="chips">${[['week','Weeks'],['month','Months'],['year','Years']].map(([k,n])=>`<button class="chip ${k===rg?'on':''}" onclick="rg='${k}';render()">${n}</button>`).join('')}</div>`;
+  return vchips+`<div class="card"><h3>💰 Spend summary</h3><div class="grid">${totals}</div></div>`+gchips+
+  `<div class="card"><h3>Fuel spend (${gl})</h3>${barChart(bs,seriesFor(spend),x=>'₹'+compact(x))}</div>`+
+  `<div class="card"><h3>Km driven (${gl})</h3>${barChart(bs,seriesFor(kms),compact)}</div>`+
+  `<div class="card"><h3>Cost per km (${gl})</h3>${lineChart(bs,cpkPts,{hi:cpkHi,step:niceStep(cpkHi/4),fmt:x=>'₹'+f(x,1),label:x=>'₹'+f(x,1)})}</div>`+
+  `<div class="card"><h3>Price per litre trend</h3>${lineChart(bs,pplPts,{lo:plo,hi:phi,step:pst,fmt:x=>'₹'+f(x,0),label:x=>f(x,1)})}</div>`+
+  `<div class="card"><h3>Spend split</h3>${rv==='all'?'<p class="note">By vehicle</p>'+splitRows(db.vehicles.map(v=>({n:v.icon+' '+v.name,v:db.entries.filter(e=>e.v===v.id).reduce((a,e)=>a+e.amt,0),c:colorOf(v.id)}))):''}<p class="note">By fuel type</p>${splitRows(FUELS.map((n,i)=>({n,v:allE.filter(e=>(e.fuel||FUELS[0])===n).reduce((a,e)=>a+e.amt,0),c:COLORS[i%COLORS.length]})))}</div>`+
+  `<div class="card"><h3>Regular vs premium</h3>${Object.keys(fuels).length?'<div class="grid">'+Object.entries(fuels).map(([n,x])=>`<div class="stat"><small>${n}</small><span class="m">${f(x.km/x.l)} km/L</span><br><small>${inr(x.amt/x.km,2)}/km · ${f(x.km,0)} km</small></div>`).join('')+'</div><p class="note">Fuel type is taken from the fill-up that powered each stretch.</p>':'<p class="note">No data yet.</p>'}</div>`+
+  `<div class="card"><h3>Highlights</h3><div class="grid">
+  <div class="stat"><small>Avg km / day</small><span>${f(kmDay,1)}</span></div>
+  <div class="stat"><small>Longest stretch</small><span>${longest?f(longest.km,0)+' km':'–'}</span><br><small>${longest?f(longest.days,1)+' days':''}</small></div>
+  <div class="stat"><small>Best ${rg}</small><span class="m">${best?f(best[0])+' km/L':'–'}</span><br><small>${best?best[1]:''}</small></div>
+  <div class="stat"><small>Worst ${rg}</small><span>${worst?f(worst[0])+' km/L':'–'}</span><br><small>${worst?worst[1]:''}</small></div>
+  <div class="stat" style="grid-column:span 2"><small>Best single fill-up</small><span class="m">${bestFill?f(bestFill.km/bestFill.l)+' km/L':'–'}</span><small>${bestFill?' · '+new Date(bestFill.t).toLocaleDateString([],{dateStyle:'medium'})+' · '+bestFill.fuel:''}</small></div></div></div>`;
+}
+function exportCSV(){
+  const rows=[['date','vehicle','fuel','amount_inr','litres','price_per_litre','odometer_km']];
+  for(const e of db.entries.slice().sort((a,b)=>a.t.localeCompare(b.t)))rows.push([e.t.replace('T',' '),veh(e.v).name,e.fuel||FUELS[0],e.amt,e.l,+(e.amt/e.l).toFixed(2),e.odo]);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}));
+  a.download='fuel-tracker.csv';a.click();
 }
 const statHTML=s=>`<div class="grid">
 <div class="stat"><small>Km driven</small><span>${f(s.km,0)}</span></div>
@@ -188,6 +281,7 @@ function views(){
     `<div class="card"><h3>📈 ${veh(vid).name} mileage (km/L)</h3><div class="chips">${[['week','Weeks'],['month','Months'],['year','Years']].map(([k,n])=>`<button class="chip ${k===cg?'on':''}" onclick="cg='${k}';render()">${n}</button>`).join('')}</div>${chartHTML(vid,cg)}<p class="note">Scale 0–${vmax(veh(vid))} km/L (set per vehicle in Backup tab).</p></div>`+
     `<div class="card"><h3>All vehicles · ${lbl}</h3>${statHTML(stats(db.vehicles.map(v=>v.id),period))}</div>`;
   }
+  if(tab==='reports')return reportsHTML();
   if(tab==='history')return chips()+`<div class="card">${db.entries.filter(e=>e.v===vid).sort((a,b)=>b.t.localeCompare(a.t)).map(e=>`<div class="item"><div><b>${inr(e.amt,2)}</b> · ${f(e.l,2)} L <small>@ ${inr(e.amt/e.l,2)}</small><br><small>${new Date(e.t).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})}${e.odo?' · '+f(e.odo,0)+' km':''}${e.fuel&&e.fuel!==FUELS[0]?' · '+e.fuel:''}</small></div><div><button class="sm" onclick="edit('${e.id}')">Edit</button> <button class="sm d" onclick="del('${e.id}')">✕</button></div></div>`).join('')||'<p class="note">No entries yet.</p>'}</div>`;
   return settings();
 }
@@ -202,7 +296,7 @@ function settings(){
   return `<div class="card"><h3>Vehicles</h3>${db.vehicles.map(v=>`<div class="item"><span>${v.icon}</span><input value="${v.name.replace(/"/g,'&quot;')}" onchange="renVeh('${v.id}',this.value)" style="flex:2"><input type="number" value="${vmax(v)}" title="Chart max km/L" onchange="maxVeh('${v.id}',this.value)" style="flex:1"><button class="sm d" onclick="rmVeh('${v.id}')">✕</button></div>`).join('')}<p class="note">Edit the name, and the chart max (best km/L) in the number box.</p>
   <div class="row" style="margin-top:10px"><input id="vn" placeholder="New vehicle name"><button class="sm" style="flex:0 0 80px" onclick="addVeh()">Add</button></div></div>
   <div class="card"><h3>Backup to file / Google Drive</h3>
-  <div class="row"><button class="sm" onclick="exportFile()">⬇ Export file</button><button class="sm" onclick="$('#imp').click()">⬆ Import file</button></div>
+  <div class="row"><button class="sm" onclick="exportFile()">⬇ Export file</button><button class="sm" onclick="$('#imp').click()">⬆ Import file</button><button class="sm" onclick="exportCSV()">📄 CSV</button></div>
   <input id="imp" type="file" accept=".json" class="hide" onchange="importFile(this.files[0])">
   <p class="note">Export creates a JSON file — save it to Google Drive. Import restores it (replaces current data).</p></div>
   <div class="card"><h3>GitHub sync (private Gist)</h3>
@@ -252,7 +346,7 @@ async function pullGist(){
 }
 function render(){
   $('#app').innerHTML=views();$('#app').className=tab==='add'?'home':'';
-  $('#nav').innerHTML=[['add','＋','Add'],['stats','📊','Stats'],['history','🧾','History'],['settings','⚙️','Backup']].map(([k,i,n])=>`<button class="${(tab===k||(tab==='edit'&&k==='history'))?'on':''}" onclick="tab='${k}';render()"><b>${i}</b>${n}</button>`).join('');
+  $('#nav').innerHTML=[['add','＋','Add'],['stats','📊','Stats'],['reports','💰','Spends'],['history','🧾','History'],['settings','⚙️','Backup']].map(([k,i,n])=>`<button class="${(tab===k||(tab==='edit'&&k==='history'))?'on':''}" onclick="tab='${k}';render()"><b>${i}</b>${n}</button>`).join('');
 }
 render();
 </script>
