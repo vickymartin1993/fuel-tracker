@@ -34,6 +34,12 @@ h3{margin:4px 0 10px;font-size:15px;color:var(--c)}
 .item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #ffffff14;gap:8px}
 .item small{color:var(--mut)}
 .hide{display:none}
+.home label{font-size:15px;margin-top:14px}
+.home input,.home select{font-size:24px;padding:18px;border-radius:16px}
+.home .big{font-size:24px;padding:22px;border-radius:20px}
+.home .chip{font-size:19px;padding:14px 22px}
+.home .card{padding:20px}
+svg{width:100%;height:auto;display:block}
 .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:var(--g);color:#052;padding:10px 18px;border-radius:999px;font-weight:700;z-index:9}
 .note{color:var(--mut);font-size:12px;line-height:1.5}
 </style>
@@ -45,12 +51,13 @@ h3{margin:4px 0 10px;font-size:15px;color:var(--c)}
 <script>
 const KEY='fuelTracker.v1';
 let db=JSON.parse(localStorage.getItem(KEY)||'null')||{vehicles:[{id:'car',name:'Car',icon:'🚗'},{id:'bike',name:'Bike',icon:'🏍️'}],entries:[],settings:{}};
-let tab='add',vid=db.vehicles[0].id,editId=null,period='month',last=[];
+let cg='month',tab='add',vid=db.vehicles[0].id,editId=null,period='month',last=[];
 const save=()=>{db.updated=Date.now();localStorage.setItem(KEY,JSON.stringify(db))};
 const $=s=>document.querySelector(s);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const nowLocal=()=>{const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)};
 const FUELS=['Regular Petrol','Shell V-Power','HP Power','IOC XP95','Other Premium'];
+const vmax=v=>v.max||(v.id==='car'?25:v.id==='bike'?45:40);
 const inr=(n,d=0)=>Number.isFinite(n)?'₹'+n.toLocaleString('en-IN',{maximumFractionDigits:d}):'–';
 const f=(n,d=1)=>Number.isFinite(n)?n.toLocaleString(undefined,{maximumFractionDigits:d}):'–';
 const veh=id=>db.vehicles.find(v=>v.id===id)||{name:'?',icon:''};
@@ -86,6 +93,37 @@ function stats(ids,p){
     for(const s of segments(id).filter(s=>s.t>=from)){km+=s.km;sl+=s.l}
   }
   return{km,cost,l,fills,mil:sl?km/sl:NaN,cpk:km?cost/km:NaN};
+}
+function weekKey(d){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-((x.getDay()+6)%7));return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')}
+function buckets(g){
+  const out=[],now=new Date();
+  if(g==='week'){const d=new Date(now);d.setDate(d.getDate()-7*11);for(let i=0;i<12;i++){out.push({k:weekKey(d),lb:d.getDate()+' '+d.toLocaleString([],{month:'short'})});d.setDate(d.getDate()+7)}}
+  else if(g==='month'){for(let i=11;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);out.push({k:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),lb:d.toLocaleString([],{month:'short'})})}}
+  else{const ys=db.entries.map(e=>+e.t.slice(0,4));const y0=Math.min(now.getFullYear()-2,...ys);for(let y=y0;y<=now.getFullYear();y++)out.push({k:''+y,lb:''+y})}
+  return out;
+}
+function chartHTML(id,g){
+  const v=veh(id),bs=buckets(g);
+  const key=t=>g==='week'?weekKey(t):g==='month'?t.slice(0,7):t.slice(0,4);
+  const acc={};
+  for(const sg of segments(id)){const k=key(sg.t);(acc[k]=acc[k]||{km:0,l:0});acc[k].km+=sg.km;acc[k].l+=sg.l}
+  const pts=bs.map(b=>acc[b.k]&&acc[b.k].l?acc[b.k].km/acc[b.k].l:null);
+  const top=Math.max(vmax(v),Math.ceil(Math.max(0,...pts.filter(x=>x!==null))));
+  const W=340,H=210,L=30,R=10,T=18,B=30,pw=W-L-R,ph=H-T-B;
+  const X=i=>L+(bs.length>1?i*pw/(bs.length-1):pw/2),Y=m=>T+ph-(m/top)*ph;
+  let svg=`<svg viewBox="0 0 ${W} ${H}"><defs><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff6b6b"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b6b" stop-opacity=".35"/><stop offset="1" stop-color="#ff6b6b" stop-opacity="0"/></linearGradient></defs>`;
+  const step=top<=30?5:10;
+  for(let m=0;m<=top;m+=step)svg+=`<line x1="${L}" x2="${W-R}" y1="${Y(m)}" y2="${Y(m)}" stroke="#ffffff1a"/><text x="${L-5}" y="${Y(m)+4}" font-size="10" fill="#a79fd6" text-anchor="end">${m}</text>`;
+  const every=bs.length>8?2:1;
+  bs.forEach((b,i)=>{if(i%every===0||i===bs.length-1)svg+=`<text x="${X(i)}" y="${H-10}" font-size="9" fill="#a79fd6" text-anchor="middle">${b.lb}</text>`});
+  let run=[];const runs=[];pts.forEach((m,i)=>{if(m===null){if(run.length)runs.push(run);run=[]}else run.push([X(i),Y(m)])});if(run.length)runs.push(run);
+  for(const r of runs){
+    if(r.length>1){const d=r.map((q,i)=>(i?'L':'M')+q[0]+' '+q[1]).join(' ');
+      svg+=`<path d="${d} L${r[r.length-1][0]} ${Y(0)} L${r[0][0]} ${Y(0)}Z" fill="url(#ga)"/><path d="${d}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`}
+  }
+  pts.forEach((m,i)=>{if(m!==null)svg+=`<circle cx="${X(i)}" cy="${Y(m)}" r="4" fill="#fff" stroke="#ff6b6b" stroke-width="2"/><text x="${X(i)}" y="${Y(m)-8}" font-size="10" font-weight="700" fill="#34d399" text-anchor="middle">${f(m)}</text>`});
+  if(!pts.some(x=>x!==null))svg+=`<text x="${W/2}" y="${H/2}" font-size="12" fill="#a79fd6" text-anchor="middle">No mileage data yet</text>`;
+  return svg+'</svg>';
 }
 const statHTML=s=>`<div class="grid">
 <div class="stat"><small>Km driven</small><span>${f(s.km,0)}</span></div>
@@ -147,6 +185,7 @@ function views(){
     const lbl=period==='all'?'Till date':'This '+period;
     return chips()+`<div class="chips">${['week','month','year','all'].map(p=>`<button class="chip ${p===period?'on':''}" onclick="period='${p}';render()">${p==='all'?'Overall':'This '+p}</button>`).join('')}</div>`+
     `<div class="card"><h3>${veh(vid).icon} ${veh(vid).name} · ${lbl}</h3>${statHTML(stats([vid],period))}</div>`+
+    `<div class="card"><h3>📈 ${veh(vid).name} mileage (km/L)</h3><div class="chips">${[['week','Weeks'],['month','Months'],['year','Years']].map(([k,n])=>`<button class="chip ${k===cg?'on':''}" onclick="cg='${k}';render()">${n}</button>`).join('')}</div>${chartHTML(vid,cg)}<p class="note">Scale 0–${vmax(veh(vid))} km/L (set per vehicle in Backup tab).</p></div>`+
     `<div class="card"><h3>All vehicles · ${lbl}</h3>${statHTML(stats(db.vehicles.map(v=>v.id),period))}</div>`;
   }
   if(tab==='history')return chips()+`<div class="card">${db.entries.filter(e=>e.v===vid).sort((a,b)=>b.t.localeCompare(a.t)).map(e=>`<div class="item"><div><b>${inr(e.amt,2)}</b> · ${f(e.l,2)} L <small>@ ${inr(e.amt/e.l,2)}</small><br><small>${new Date(e.t).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})}${e.odo?' · '+f(e.odo,0)+' km':''}${e.fuel&&e.fuel!==FUELS[0]?' · '+e.fuel:''}</small></div><div><button class="sm" onclick="edit('${e.id}')">Edit</button> <button class="sm d" onclick="del('${e.id}')">✕</button></div></div>`).join('')||'<p class="note">No entries yet.</p>'}</div>`;
@@ -160,7 +199,7 @@ function quick(){
 }
 function settings(){
   const s=db.settings;
-  return `<div class="card"><h3>Vehicles</h3>${db.vehicles.map(v=>`<div class="item"><span>${v.icon} ${v.name}</span><button class="sm d" onclick="rmVeh('${v.id}')">Remove</button></div>`).join('')}
+  return `<div class="card"><h3>Vehicles</h3>${db.vehicles.map(v=>`<div class="item"><span>${v.icon}</span><input value="${v.name.replace(/"/g,'&quot;')}" onchange="renVeh('${v.id}',this.value)" style="flex:2"><input type="number" value="${vmax(v)}" title="Chart max km/L" onchange="maxVeh('${v.id}',this.value)" style="flex:1"><button class="sm d" onclick="rmVeh('${v.id}')">✕</button></div>`).join('')}<p class="note">Edit the name, and the chart max (best km/L) in the number box.</p>
   <div class="row" style="margin-top:10px"><input id="vn" placeholder="New vehicle name"><button class="sm" style="flex:0 0 80px" onclick="addVeh()">Add</button></div></div>
   <div class="card"><h3>Backup to file / Google Drive</h3>
   <div class="row"><button class="sm" onclick="exportFile()">⬇ Export file</button><button class="sm" onclick="$('#imp').click()">⬆ Import file</button></div>
@@ -174,6 +213,8 @@ function settings(){
   <p class="note">The token stays on this device only (never in exports). Data is always kept locally too.</p></div>`;
 }
 function setS(k,v){db.settings[k]=v;save()}
+function renVeh(id,n){n=n.trim();if(!n)return render();veh(id).name=n;save();toast('Renamed ✓')}
+function maxVeh(id,m){m=parseFloat(m);if(m>0){veh(id).max=m;save();toast('Saved ✓')}}
 function addVeh(){const n=$('#vn').value.trim();if(!n)return;db.vehicles.push({id:uid(),name:n,icon:/bike|moto|scoot/i.test(n)?'🏍️':'🚗'});save();render()}
 function rmVeh(id){if(db.vehicles.length<2)return toast('Keep at least one');if(confirm('Remove vehicle and all its entries?')){db.vehicles=db.vehicles.filter(v=>v.id!==id);db.entries=db.entries.filter(e=>e.v!==id);vid=db.vehicles[0].id;save();render()}}
 const clean=()=>{const {token,...s}=db.settings;return{...db,settings:s}};
@@ -210,7 +251,7 @@ async function pullGist(){
   }catch(e){toast('Download failed ('+e.message+')')}
 }
 function render(){
-  $('#app').innerHTML=views();
+  $('#app').innerHTML=views();$('#app').className=tab==='add'?'home':'';
   $('#nav').innerHTML=[['add','＋','Add'],['stats','📊','Stats'],['history','🧾','History'],['settings','⚙️','Backup']].map(([k,i,n])=>`<button class="${(tab===k||(tab==='edit'&&k==='history'))?'on':''}" onclick="tab='${k}';render()"><b>${i}</b>${n}</button>`).join('');
 }
 render();
