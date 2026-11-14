@@ -56,15 +56,15 @@ const f=(n,d=1)=>Number.isFinite(n)?n.toLocaleString(undefined,{maximumFractionD
 const veh=id=>db.vehicles.find(v=>v.id===id)||{name:'?',icon:''};
 const toast=m=>{const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),1800)};
 
-// Distance between consecutive odometer readings, attributed to the later fill-up
+// No full-tank assumption: fuel bought at a fill-up is what powers the km driven
+// until the NEXT fill-up. So each segment = km between two readings / litres of the earlier fill.
+// The segment is dated at the later fill-up (when the km were completed).
 function segments(id){
-  const es=db.entries.filter(e=>e.v===id).sort((a,b)=>a.t.localeCompare(b.t));
-  const out=[];let prev=null;
-  for(const e of es){
-    if(e.odo>0){
-      if(prev!==null&&e.odo>prev)out.push({t:e.t,km:e.odo-prev,l:e.l});
-      prev=e.odo;
-    }
+  const es=db.entries.filter(e=>e.v===id&&e.odo>0).sort((a,b)=>a.t.localeCompare(b.t));
+  const out=[];
+  for(let i=1;i<es.length;i++){
+    const km=es[i].odo-es[i-1].odo;
+    if(km>0)out.push({t:es[i].t,km,l:es[i-1].l});
   }
   return out;
 }
@@ -103,10 +103,10 @@ function formHTML(e){
   <div class="row"><div><label>Total amount (₹)</label><input id="amt" type="number" inputmode="decimal" step="any" value="${e.amt??''}" oninput="calc('amt')"></div>
   <div><label>Litres</label><input id="l" type="number" inputmode="decimal" step="any" value="${e.l??''}" oninput="calc('l')"></div></div>
   <div class="row"><div><label>Price per litre (₹)</label><input id="ppl" type="number" inputmode="decimal" step="any" value="${e.amt&&e.l?+(e.amt/e.l).toFixed(2):''}" oninput="calc('ppl')"></div>
-  <div><label>Odometer (km, optional)</label><input id="odo" type="number" inputmode="numeric" value="${e.odo||''}"></div></div>
+  <div><label>Odometer (km) *</label><input id="odo" type="number" inputmode="numeric" value="${e.odo||''}"></div></div>
   <label>Fuel type</label><select id="fuel">${FUELS.map(x=>`<option ${x===(e.fuel||FUELS[0])?'selected':''}>${x}</option>`).join('')}</select>
   <label>Date &amp; time (auto, editable)</label><input id="t" type="datetime-local" value="${e.t}">
-  <p class="note">Fill any two of amount / litres / price — the third is calculated.</p>
+  <p class="note">Fill any two of amount / litres / price — the third is calculated. Partial fills are fine; mileage uses the km driven after each fill.</p>
   </div>`;
 }
 function calc(src){
@@ -120,7 +120,12 @@ function calc(src){
 function readForm(){
   const amt=parseFloat($('#amt').value),l=parseFloat($('#l').value);
   if(!(amt>0)||!(l>0)){toast('Enter any two of amount / litres / price');return null}
-  return{amt,l,odo:parseFloat($('#odo').value)||0,fuel:$('#fuel').value,t:$('#t').value||nowLocal()};
+  const odo=parseFloat($('#odo').value),t=$('#t').value||nowLocal();
+  if(!(odo>0)){toast('Odometer reading is required');return null}
+  const o=db.entries.filter(e=>e.v===(editId?db.entries.find(x=>x.id===editId).v:vid)&&e.id!==editId&&e.odo>0).sort((a,b)=>a.t.localeCompare(b.t));
+  const before=o.filter(e=>e.t<=t).pop(),after=o.find(e=>e.t>t);
+  if(before&&odo<=before.odo||after&&odo>=after.odo){toast('Odometer must fit between neighbouring entries');return null}
+  return{amt,l,odo,fuel:$('#fuel').value,t};
 }
 function add(){
   const r=readForm();if(!r)return;
