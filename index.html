@@ -45,6 +45,10 @@ h3{margin:4px 0 10px;font-size:15px;color:var(--c)}
 .home .chip{font-size:19px;padding:14px 22px}
 .home .card{padding:20px}
 svg{width:100%;height:auto;display:block}
+.bar{height:8px;border-radius:6px;background:#150f35;margin:6px 0}.bar i{display:block;height:8px;border-radius:6px}
+.ov{position:fixed;inset:0;background:#000d;z-index:20;display:flex;align-items:center;justify-content:center}.ov img{max-width:95%;max-height:90%;border-radius:12px}
+#pr{display:none}
+@media print{body.printing{background:#fff}body.printing>*:not(#pr){display:none!important}body.printing #pr{display:block;color:#000;padding:10px;font-family:system-ui,sans-serif;font-size:12px}#pr table{width:100%;border-collapse:collapse;margin-bottom:14px}#pr th,#pr td{border:1px solid #999;padding:4px 6px;text-align:left}}
 .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:var(--g);color:#052;padding:10px 18px;border-radius:999px;font-weight:700;z-index:9}
 .note{color:var(--mut);font-size:12px;line-height:1.5}
 </style>
@@ -52,6 +56,7 @@ svg{width:100%;height:auto;display:block}
 <body>
 <header>⛽ Fuel Tracker</header>
 <main id="app"></main>
+<div id="pr"></div>
 <nav id="nav"></nav>
 <script>
 const KEY='fuelTracker.v1';
@@ -63,6 +68,8 @@ function normalize(d){
   if(!d.vehicles.length)d.vehicles=defVehicles();
   d.entries=Array.isArray(d.entries)?d.entries:[];
   d.services=Array.isArray(d.services)?d.services:[];
+  d.todos=Array.isArray(d.todos)?d.todos:[];
+  d.docs=(Array.isArray(d.docs)?d.docs:[]).filter(x=>x&&typeof x.exp==='string');
   d.deleted=d.deleted&&typeof d.deleted==='object'?d.deleted:{};
   d.settings=d.settings&&typeof d.settings==='object'?d.settings:{};
   return d;
@@ -144,7 +151,7 @@ function buckets(g){
   const out=[],now=new Date();
   if(g==='week'){const d=new Date(now);d.setDate(d.getDate()-7*11);for(let i=0;i<12;i++){out.push({k:weekKey(d),lb:d.getDate()+' '+d.toLocaleString([],{month:'short'})});d.setDate(d.getDate()+7)}}
   else if(g==='month'){for(let i=11;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);out.push({k:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),lb:d.toLocaleString([],{month:'short'})})}}
-  else{const ys=db.entries.map(e=>+e.t.slice(0,4));const y0=Math.min(now.getFullYear()-2,...ys);for(let y=y0;y<=now.getFullYear();y++)out.push({k:''+y,lb:''+y})}
+  else{const ys=[...db.entries,...db.services].map(e=>+e.t.slice(0,4));const y0=Math.min(now.getFullYear()-2,...ys);for(let y=y0;y<=now.getFullYear();y++)out.push({k:''+y,lb:''+y})}
   return out;
 }
 const COLORS=['#ffb347','#8b5cf6','#22d3ee','#34d399','#ff6b6b','#f472b6'];
@@ -323,68 +330,283 @@ function edit(id){editId=id;vid=db.entries.find(x=>x.id===id).v;tab='edit';rende
 const lastOdo=v=>Math.max(0,...db.entries.filter(e=>e.v===v).map(e=>e.odo||0));
 const curOdo=v=>Math.max(lastOdo(v),...db.services.filter(s=>s.v===v).map(s=>s.odo||0));
 
-// ---------- Service log ----------
-const SVC_TYPES=['Engine oil change','Oil filter','Air filter','Chain clean & lube','Brake pads / shoes','Tyres','Battery','Coolant','Spark plug','General service','Other'];
-const SVC_DEF={'Engine oil change':[3000,6],'Oil filter':[6000,12],'Air filter':[10000,12],'Chain clean & lube':[500,1],'Brake pads / shoes':[20000,24],'Tyres':[30000,36],'Battery':[0,36],'Coolant':[40000,24],'Spark plug':[15000,24],'General service':[5000,6]};
+// ---------- Service log, upcoming work, papers ----------
+const SVC_TYPES=['Engine oil change','Oil filter','Air filter','Chain clean & lube','Brake pads / shoes','Tyres','Battery','Coolant','Spark plug','General service','Wheel alignment & balancing','Clutch / gear oil'];
+const SVC_DEF={'Engine oil change':[3000,6],'Oil filter':[6000,12],'Air filter':[10000,12],'Chain clean & lube':[500,1],'Brake pads / shoes':[20000,24],'Tyres':[30000,36],'Battery':[0,36],'Coolant':[40000,24],'Spark plug':[15000,24],'General service':[5000,6],'Wheel alignment & balancing':[10000,12],'Clutch / gear oil':[20000,24]};
+const DOC_KINDS=['Insurance – Third party','Insurance – Own damage (self)','Insurance – Comprehensive (own damage + third party)','PUC (pollution certificate)','Registration certificate (RC)','Fitness certificate','Driving licence','Other'];
+const DOC_MONTHS=[12,12,12,6,0,0,0,0];
+let svcSub='overview',svcPre=null,todoEditId=null,docEditId=null,docPre=null,scg='month',pendingPhoto=null;
 const RANK={over:0,soon:1,ok:2,none:3};
+const COL={over:'#ff6b6b',soon:'#ffb347',ok:'#34d399',none:'#a79fd6'},ICO={over:'🔴',soon:'🟠',ok:'🟢',none:'⚪'};
+const today=()=>nowLocal().slice(0,10);
+const addMonths=(s,n)=>{const d=new Date(s+'T00:00');d.setMonth(d.getMonth()+n);d.setDate(d.getDate()-1);return ymd(d).slice(0,10)};
+const allTypes=x=>[...new Set([...SVC_TYPES,...db.services.map(s=>s.type),...(x?[x]:[])])];
+const bar=(p,st)=>p===null?'':`<div class="bar"><i style="width:${Math.round(Math.min(1,Math.max(.03,p))*100)}%;background:${COL[st]}"></i></div>`;
+// last interval used for this vehicle+type, else a sensible default
+function svcIntervals(v,type){
+  const l=db.services.filter(s=>s.v===v&&s.type===type).sort((a,b)=>b.t.localeCompare(a.t))[0];
+  return l?[l.intKm||0,l.intMo||0]:(SVC_DEF[type]||[0,0]);
+}
+function dueInfo(cur,dueKm,dueD,odo0,t0){
+  const now=Date.now(),kmLeft=dueKm?dueKm-cur:null,dLeft=dueD?Math.ceil((dueD-now)/864e5):null;
+  const over=(kmLeft!==null&&kmLeft<0)||(dLeft!==null&&dLeft<0);
+  const soon=!over&&((kmLeft!==null&&kmLeft<=500)||(dLeft!==null&&dLeft<=14));
+  const pk=dueKm&&dueKm>odo0?(cur-odo0)/(dueKm-odo0):null,pt=dueD?(now-new Date(t0))/(dueD-new Date(t0)):null;
+  const ps=[pk,pt].filter(x=>x!==null&&Number.isFinite(x));
+  return{dueKm:dueKm||null,dueD,kmLeft,dLeft,state:over?'over':soon?'soon':(dueKm||dueD)?'ok':'none',pct:ps.length?Math.max(...ps):null};
+}
 function svcStatus(v){
-  const cur=curOdo(v),now=Date.now(),latest={};
+  const cur=curOdo(v),latest={};
   for(const s of db.services.filter(x=>x.v===v).sort((a,b)=>a.t.localeCompare(b.t)))latest[s.type]=s;
   return Object.values(latest).map(s=>{
-    const dueKm=s.intKm>0?s.odo+s.intKm:null;
     let dueD=null;if(s.intMo>0){dueD=new Date(s.t);dueD.setMonth(dueD.getMonth()+s.intMo)}
-    const kmLeft=dueKm!==null?dueKm-cur:null,dLeft=dueD?Math.ceil((dueD-now)/864e5):null;
-    const over=(kmLeft!==null&&kmLeft<0)||(dLeft!==null&&dLeft<0);
-    const soon=!over&&((kmLeft!==null&&kmLeft<=500)||(dLeft!==null&&dLeft<=14));
-    return{s,dueKm,dueD,kmLeft,dLeft,state:over?'over':soon?'soon':(dueKm!==null||dueD)?'ok':'none'};
+    return{s,...dueInfo(cur,s.intKm>0?s.odo+s.intKm:0,dueD,s.odo,s.t)};
   }).sort((a,b)=>RANK[a.state]-RANK[b.state]);
+}
+function todoStatus(v){
+  const cur=curOdo(v);
+  return db.todos.filter(x=>x.v===v).map(t=>({t,...dueInfo(cur,t.dueKm||0,t.dueD?new Date(t.dueD+'T23:59:59'):null,t.odo0||cur,t.t0||nowLocal())})).sort((a,b)=>RANK[a.state]-RANK[b.state]);
+}
+function docStatus(v){
+  const now=Date.now(),latest={};
+  for(const d of db.docs.filter(x=>x.v===v).sort((a,b)=>a.exp.localeCompare(b.exp)))latest[d.kind]=d;
+  return Object.values(latest).map(d=>{
+    const e=new Date(d.exp+'T23:59:59'),dl=Math.ceil((e-now)/864e5);
+    let pct=null;if(d.start){const s0=new Date(d.start+'T00:00');if(e>s0)pct=(now-s0)/(e-s0)}
+    return{d,dl,pct,state:dl<0?'over':dl<=30?'soon':'ok'};
+  }).sort((a,b)=>RANK[a.state]-RANK[b.state]||a.dl-b.dl);
 }
 function nextText(r){
   const p=[];
-  if(r.kmLeft!==null)p.push(r.kmLeft<0?f(-r.kmLeft,0)+' km overdue':f(r.kmLeft,0)+' km left (due at '+f(r.dueKm,0)+' km)');
-  if(r.dLeft!==null)p.push(r.dLeft<0?(-r.dLeft)+' days overdue':'due '+fmtDate(r.dueD)+' ('+r.dLeft+' days)');
-  return p.length?'Next: '+p.join(' · or '):'No reminder set';
+  if(r.kmLeft!==null)p.push(r.kmLeft<0?f(-r.kmLeft,0)+' km overdue':f(r.kmLeft,0)+' km left (at '+f(r.dueKm,0)+' km)');
+  if(r.dLeft!==null)p.push(r.dLeft<0?(-r.dLeft)+' days overdue':'by '+fmtDate(r.dueD)+' ('+r.dLeft+' days)');
+  return p.length?p.join(' · or '):'No reminder set';
 }
+function alerts(){
+  const out=[];
+  for(const v of db.vehicles){
+    for(const r of svcStatus(v.id))if(r.state==='over'||r.state==='soon')out.push({v,sub:'overview',st:r.state,txt:r.s.type+(r.state==='over'?' overdue':' due soon')});
+    for(const r of todoStatus(v.id))if(r.state==='over'||r.state==='soon')out.push({v,sub:'todo',st:r.state,txt:r.t.title+(r.state==='over'?' overdue':' due soon')});
+    for(const r of docStatus(v.id))if(r.state!=='ok')out.push({v,sub:'docs',st:r.state,txt:r.d.kind.split(' (')[0]+(r.state==='over'?' expired':' expires in '+r.dl+' days')});
+  }
+  return out.sort((a,b)=>RANK[a.st]-RANK[b.st]);
+}
+function goSvc(v,sub){vid=v;svcSub=sub;tab='service';render()}
 const svcBanner=()=>{
-  const items=db.vehicles.flatMap(v=>svcStatus(v.id).filter(r=>r.state==='over'||r.state==='soon').map(r=>({v,r})));
-  if(!items.length)return '';
-  return `<div class="card" style="background:#7c2d12;padding:12px" onclick="vid='${items[0].v.id}';tab='service';render()">🔧 ${items.slice(0,3).map(i=>esc(i.v.name)+': '+esc(i.r.s.type)+' '+(i.r.state==='over'?'overdue':'due soon')).join('<br>🔧 ')}${items.length>3?'<br>+'+(items.length-3)+' more':''} — tap to view</div>`;
+  const a=alerts();if(!a.length)return '';
+  return `<div class="card" style="background:#7c2d12;padding:12px" onclick="goSvc('${a[0].v.id}','${a[0].sub}')">${a.slice(0,3).map(i=>'🔧 '+esc(i.v.name)+': '+esc(i.txt)).join('<br>')}${a.length>3?'<br>+'+(a.length-3)+' more':''} — tap to view</div>`;
 };
+// ----- photos (kept on this phone only, in IndexedDB) -----
+const idb=()=>new Promise((res,rej)=>{const r=indexedDB.open('fuelPhotos',1);r.onupgradeneeded=()=>r.result.createObjectStore('p');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const idbDo=async(mode,fn)=>{const d=await idb();return new Promise((res,rej)=>{const t=d.transaction('p',mode),o=fn(t.objectStore('p'));t.oncomplete=()=>res(o&&o.result);t.onerror=()=>rej(t.error)})};
+const putPhoto=(id,b)=>idbDo('readwrite',s=>s.put(b,id)),getPhoto=id=>idbDo('readonly',s=>s.get(id)),delPhoto=id=>idbDo('readwrite',s=>s.delete(id));
+async function cleanPhotos(){try{const keep=new Set(db.services.filter(s=>s.ph).map(s=>s.id));for(const k of await idbDo('readonly',s=>s.getAllKeys()))if(!keep.has(k))await delPhoto(k)}catch{}}
+async function shrink(file){
+  const bm=await createImageBitmap(file),sc=Math.min(1,1100/Math.max(bm.width,bm.height));
+  const c=document.createElement('canvas');c.width=Math.round(bm.width*sc);c.height=Math.round(bm.height*sc);
+  c.getContext('2d').drawImage(bm,0,0,c.width,c.height);
+  return new Promise(r=>c.toBlob(r,'image/jpeg',.72));
+}
+async function pickPhoto(file){
+  if(!file)return;
+  try{pendingPhoto=await shrink(file);$('#sphnote').textContent='📷 Photo attached ('+Math.round(pendingPhoto.size/1024)+' KB)'}catch{toast('Could not read that photo')}
+}
+async function viewPhoto(id){
+  try{
+    const b=await getPhoto(id);if(!b)return toast('Photo is stored only on the phone where it was added');
+    const o=document.createElement('div');o.className='ov';o.onclick=()=>{URL.revokeObjectURL(o.firstChild.src);o.remove()};
+    const i=document.createElement('img');i.src=URL.createObjectURL(b);o.appendChild(i);document.body.appendChild(o);
+  }catch{toast('Could not open photo')}
+}
+// ----- service tab -----
+const subChips=()=>`<div class="chips">${[['overview','🔧 Overview'],['todo','📝 Upcoming'],['docs','📄 Papers'],['costs','💰 Costs']].map(([k,n])=>`<button class="chip ${k===svcSub?'on':''}" onclick="svcSub='${k}';render()">${n}${k==='todo'&&db.todos.some(t=>t.v===vid)?' ('+db.todos.filter(t=>t.v===vid).length+')':''}</button>`).join('')}</div>`;
 function svcHTML(){
+  return chips()+subChips()+({overview:svcOverview,todo:todoHTML,docs:docsHTML,costs:costsHTML}[svcSub]||svcOverview)();
+}
+function svcOverview(){
   const rows=svcStatus(vid),list=db.services.filter(s=>s.v===vid).sort((a,b)=>b.t.localeCompare(a.t));
-  const total=list.reduce((a,s)=>a+(s.cost||0),0);
-  const col={over:'#ff6b6b',soon:'#ffb347',ok:'#34d399',none:'#a79fd6'},ico={over:'🔴',soon:'🟠',ok:'🟢',none:'⚪'};
-  return chips()+`<button class="big" style="margin:0 0 14px" onclick="svcEditId=null;tab='svcform';render()">＋ Add service</button>`+
-  `<div class="card"><h3>🔧 At a glance · ${esc(veh(vid).name)}</h3><p class="note" style="margin-top:0">Current odometer: <b>${f(curOdo(vid),0)} km</b></p>`+
-  (rows.length?rows.map(r=>`<div class="item"><div><b>${ico[r.state]} ${esc(r.s.type)}</b><br><small>Done ${fmtDate(r.s.t)} · ${f(r.s.odo,0)} km${r.s.notes?' · '+esc(r.s.notes):''}</small><br><small style="color:${col[r.state]}">${nextText(r)}</small></div></div>`).join(''):'<p class="note">No service records yet. Tap “Add service”.</p>')+`</div>`+
-  `<div class="card"><h3>History · total ${inr(total)}</h3>`+(list.map(s=>`<div class="item"><div><b>${esc(s.type)}</b>${s.cost?' · '+inr(s.cost):''}<br><small>${fmtDate(s.t)} · ${f(s.odo,0)} km${s.notes?' · '+esc(s.notes):''}</small></div><div><button class="sm" onclick="svcEdit('${s.id}')">Edit</button> <button class="sm d" onclick="delSvc('${s.id}')">✕</button></div></div>`).join('')||'<p class="note">Nothing yet.</p>')+`</div>`;
+  const total=list.reduce((a,s)=>a+(s.cost||0),0),types=allTypes();
+  const notif='Notification' in window;
+  return `<div class="card"><h3>⚡ Quick add — tap what was done</h3><div class="chips" style="flex-wrap:wrap">${types.map((t,i)=>`<button class="chip" style="padding:8px 12px;font-size:13px" onclick="svcQuick(${i})">${esc(t)}</button>`).join('')}<button class="chip on" style="padding:8px 12px;font-size:13px" onclick="svcQuick(-1)">✏️ Custom</button></div></div>`+
+  `<div class="card"><h3>🔧 At a glance · ${esc(veh(vid).name)}</h3><p class="note" style="margin-top:0">Current odometer: <b>${f(curOdo(vid),0)} km</b>. Each row shows when it was last done and when it is next due.</p>`+
+  (rows.length?rows.map(r=>`<div class="item" style="align-items:flex-start"><div style="flex:1"><b>${ICO[r.state]} ${esc(r.s.type)}</b><br><small>Last: ${fmtDate(r.s.t)} at ${f(r.s.odo,0)} km${r.s.shop?' · '+esc(r.s.shop):''}${r.s.notes?'<br>'+esc(r.s.notes):''}</small>${bar(r.pct,r.state)}<small style="color:${COL[r.state]}">Next: ${nextText(r)}</small></div><button class="sm" onclick="svcDone('${r.s.id}')">✔ Done today</button></div>`).join(''):'<p class="note">No service records yet. Tap one of the quick-add buttons above.</p>')+`</div>`+
+  `<div class="card"><h3>History · total ${inr(total)}</h3>`+(list.map(s=>`<div class="item"><div><b>${esc(s.type)}</b>${s.cost?' · '+inr(s.cost):''}<br><small>${fmtDate(s.t)} · ${f(s.odo,0)} km${s.shop?' · '+esc(s.shop):''}${s.notes?'<br>'+esc(s.notes):''}</small></div><div>${s.ph?`<button class="sm" onclick="viewPhoto('${s.id}')">📷</button> `:''}<button class="sm" onclick="svcEdit('${s.id}')">Edit</button> <button class="sm d" onclick="delSvc('${s.id}')">✕</button></div></div>`).join('')||'<p class="note">Nothing yet.</p>')+`</div>`+
+  `<div class="card"><h3>🔔 Reminders & export</h3>${notif?(db.settings.notify&&Notification.permission==='granted'?'<p class="note" style="margin-top:0">Reminders are on. You get a notification when you open the app and something is due.</p>':'<button class="sm" onclick="enableNotify()">Turn on reminder notifications</button><p class="note">Shown when you open the app (phones may delay or hide notifications for web apps). The orange banner on the Add screen always works.</p>'):'<p class="note" style="margin-top:0">Notifications are not supported here; the orange banner on the Add screen still warns you.</p>'}<div class="row" style="margin-top:8px"><button class="sm" onclick="exportSvcCSV()">📄 CSV</button><button class="sm" onclick="printReport()">🖨 Print / PDF</button></div></div>`;
+}
+function svcQuick(i){const t=i>=0?allTypes()[i]:'';svcEditId=null;svcPre={type:t};tab='svcform';render()}
+function svcDone(id){
+  const s=db.services.find(x=>x.id===id);if(!s)return;
+  const o=curOdo(s.v);if(!(o>0))return toast('Odometer unknown');
+  const n={id:uid(),v:s.v,type:s.type,notes:'',shop:s.shop||'',odo:o,cost:0,t:nowLocal(),intKm:s.intKm,intMo:s.intMo,m:Date.now()};
+  db.services.push(n);commit();render();
+  toast(s.type+' done at '+f(o,0)+' km',()=>{db.services=db.services.filter(x=>x.id!==n.id);db.deleted[n.id]=Date.now();commit();render()});
 }
 function svcFormHTML(){
-  const s=svcEditId?db.services.find(x=>x.id===svcEditId):null,d0=SVC_DEF[SVC_TYPES[0]];
-  const x=s||{v:vid,type:SVC_TYPES[0],t:nowLocal(),odo:curOdo(vid)||'',cost:'',notes:'',intKm:d0[0],intMo:d0[1]};
+  const s=svcEditId?db.services.find(x=>x.id===svcEditId):null,pre=svcPre||{};
+  const type=s?s.type:(pre.type||SVC_TYPES[0]),v=s?s.v:vid;
+  const [ik,im]=s?[s.intKm,s.intMo]:svcIntervals(v,type);
+  const x=s||{v,type,t:nowLocal(),odo:curOdo(v)||'',cost:'',notes:pre.notes||'',shop:'',intKm:ik,intMo:im};
+  const custom=!type;
   return `<h3>${s?'Edit':'Add'} service</h3><div class="card">
-  <label>Vehicle</label><select id="sv">${db.vehicles.map(v=>`<option value="${v.id}" ${v.id===x.v?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
-  <label>What was done</label><select id="sty" onchange="svcDefaults()">${SVC_TYPES.map(t=>`<option ${t===x.type?'selected':''}>${t}</option>`).join('')}</select>
-  <label>Details (optional) e.g. brand, workshop, parts</label><input id="snote" maxlength="200" value="${esc(x.notes)}">
+  <label>Vehicle</label><select id="sv" onchange="svcDefaults()">${db.vehicles.map(v=>`<option value="${v.id}" ${v.id===x.v?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
+  <label>What was done</label><select id="sty" onchange="svcDefaults()">${allTypes(type).map(t=>`<option value="${esc(t)}" ${t===type?'selected':''}>${esc(t)}</option>`).join('')}<option value="__c" ${custom?'selected':''}>✏️ Custom — type your own</option></select>
+  <input id="scust" maxlength="60" placeholder="e.g. Engine mount replaced" class="${custom?'':'hide'}" style="margin-top:8px">
+  <label>Parts / details / warranty (optional)</label><input id="snote" maxlength="200" placeholder="e.g. Castrol 5W-30, 1 yr warranty" value="${esc(x.notes)}">
+  <label>Workshop (optional)</label><input id="sshop" maxlength="60" value="${esc(x.shop||'')}">
   <div class="row"><div><label>Odometer (km) *</label><input id="sodo" type="number" inputmode="numeric" value="${x.odo||''}"></div><div><label>Cost (₹, optional)</label><input id="scost" type="number" inputmode="decimal" step="any" value="${x.cost||''}"></div></div>
   <label>Date &amp; time</label><input id="sdt" type="datetime-local" value="${x.t}">
-  <label>Next due after… (optional)</label>
+  <label>Remind me again after… (optional)</label>
   <div class="row"><input id="sikm" type="number" inputmode="numeric" placeholder="km e.g. 3000" value="${x.intKm||''}"><input id="simo" type="number" inputmode="numeric" placeholder="months e.g. 6" value="${x.intMo||''}"></div>
-  <p class="note">Whichever comes first (km or months) triggers the reminder. Suggested values are filled in; change them to match your vehicle's manual.</p></div>
-  <button class="big" onclick="saveSvc()">Save service</button><button class="big" style="background:#3b3290" onclick="tab='service';render()">Cancel</button>`;
+  <p class="note">Whichever comes first (km or months) triggers the reminder. It remembers the values you used last time for this vehicle.</p>
+  <label>Photo of bill / part (optional, stays on this phone)</label><input id="sphoto" type="file" accept="image/*" onchange="pickPhoto(this.files[0])"><p class="note" id="sphnote">${x.ph?'📷 A photo is already attached (choose another to replace it).':''}</p></div>
+  <button class="big" onclick="saveSvc()">Save service</button><button class="big" style="background:#3b3290" onclick="svcPre=null;pendingPhoto=null;tab='service';render()">Cancel</button>`;
 }
-function svcDefaults(){if(svcEditId)return;const d=SVC_DEF[$('#sty').value];$('#sikm').value=d&&d[0]||'';$('#simo').value=d&&d[1]||''}
-function svcEdit(id){svcEditId=id;tab='svcform';render()}
-function saveSvc(){
+function svcDefaults(){
+  const sel=$('#sty').value,c=sel==='__c';$('#scust').className=c?'':'hide';
+  if(svcEditId)return;
+  const d=c?[0,0]:svcIntervals($('#sv').value,sel);$('#sikm').value=d[0]||'';$('#simo').value=d[1]||'';
+}
+function svcEdit(id){svcEditId=id;pendingPhoto=null;tab='svcform';render()}
+async function saveSvc(){
   const odo=parseFloat($('#sodo').value);if(!(odo>0))return toast('Odometer reading is required');
-  const r={v:$('#sv').value,type:$('#sty').value,notes:$('#snote').value.trim().slice(0,200),odo,cost:parseFloat($('#scost').value)||0,t:$('#sdt').value||nowLocal(),intKm:parseInt($('#sikm').value)||0,intMo:parseInt($('#simo').value)||0,m:Date.now()};
-  if(svcEditId)Object.assign(db.services.find(x=>x.id===svcEditId),r);else db.services.push({id:uid(),...r});
-  vid=r.v;svcEditId=null;commit();tab='service';toast('Service saved ✓');render();
+  const sel=$('#sty').value,type=sel==='__c'?$('#scust').value.trim().slice(0,60):sel;
+  if(!type)return toast('Type what was done');
+  const r={v:$('#sv').value,type,notes:$('#snote').value.trim().slice(0,200),shop:$('#sshop').value.trim().slice(0,60),odo,cost:parseFloat($('#scost').value)||0,t:$('#sdt').value||nowLocal(),intKm:parseInt($('#sikm').value)||0,intMo:parseInt($('#simo').value)||0,m:Date.now()};
+  const id=svcEditId||uid();
+  if(pendingPhoto){try{await putPhoto(id,pendingPhoto);r.ph=true}catch{toast('Photo could not be saved')}}
+  if(svcEditId)Object.assign(db.services.find(x=>x.id===svcEditId),r);else db.services.push({id,...r});
+  if(svcPre&&svcPre.todo){const t=db.todos.find(x=>x.id===svcPre.todo);if(t){db.todos=db.todos.filter(x=>x.id!==t.id);db.deleted[t.id]=Date.now()}}
+  vid=r.v;svcEditId=null;svcPre=null;pendingPhoto=null;commit();tab='service';toast('Service saved ✓');render();
 }
 function delSvc(id){
   const x=db.services.find(y=>y.id===id);if(!x)return;
   db.services=db.services.filter(y=>y.id!==id);db.deleted[id]=Date.now();commit();render();
   toast('Service deleted',()=>{delete db.deleted[id];db.services.push({...x,m:Date.now()});commit();render()});
+}
+// ----- upcoming work / watch list -----
+function todoHTML(){
+  const rows=todoStatus(vid);
+  return `<button class="big" style="margin:0 0 14px" onclick="todoEditId=null;tab='todoform';render()">＋ Add upcoming work</button>`+
+  `<div class="card"><h3>📝 Upcoming work · ${esc(veh(vid).name)}</h3><p class="note" style="margin-top:0">Things a mechanic told you to do later, for example “brake pads in 2000 km” or “engine mount needs changing”. Current odometer: <b>${f(curOdo(vid),0)} km</b>.</p>`+
+  (rows.map(r=>`<div class="item" style="align-items:flex-start"><div style="flex:1"><b>${ICO[r.state]} ${esc(r.t.title)}</b>${r.t.notes?'<br><small>'+esc(r.t.notes)+'</small>':''}${bar(r.pct,r.state)}<small style="color:${COL[r.state]}">${nextText(r)}</small><br><small>Added ${fmtDate(r.t.t0)}</small></div><div style="display:flex;flex-direction:column;gap:6px"><button class="sm" onclick="todoDone('${r.t.id}')">✔ Done</button><button class="sm" onclick="todoEdit('${r.t.id}')">Edit</button><button class="sm d" onclick="delTodo('${r.t.id}')">✕</button></div></div>`).join('')||'<p class="note">Nothing planned. Tap “Add upcoming work”.</p>')+`</div>`;
+}
+function todoFormHTML(){
+  const t=todoEditId?db.todos.find(x=>x.id===todoEditId):null;
+  return `<h3>${t?'Edit':'Add'} upcoming work</h3><div class="card">
+  <label>Vehicle</label><select id="tv">${db.vehicles.map(v=>`<option value="${v.id}" ${v.id===(t?t.v:vid)?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
+  <label>What needs doing</label><input id="ttl" maxlength="60" placeholder="e.g. Brake pads / Engine mount" value="${esc(t?t.title:'')}">
+  <label>Note (optional) e.g. what the mechanic said</label><input id="tnote" maxlength="200" value="${esc(t?t.notes:'')}">
+  <label>Due after how many km from now?</label><input id="tafter" type="number" inputmode="numeric" placeholder="e.g. 2000">
+  <label>…or at this odometer reading (km)</label><input id="tat" type="number" inputmode="numeric" placeholder="e.g. 45000" value="${t&&t.dueKm?t.dueKm:''}">
+  <label>…and/or by this date (optional)</label><input id="tdate" type="date" value="${t&&t.dueD?t.dueD:''}">
+  <p class="note">Use any one or combine them; the reminder fires on whichever comes first. “After X km” is added to your current odometer (${f(curOdo(vid),0)} km).</p></div>
+  <button class="big" onclick="saveTodo()">Save</button><button class="big" style="background:#3b3290" onclick="tab='service';render()">Cancel</button>`;
+}
+function todoEdit(id){todoEditId=id;tab='todoform';render()}
+function saveTodo(){
+  const title=$('#ttl').value.trim().slice(0,60);if(!title)return toast('Enter what needs doing');
+  const v=$('#tv').value,cur=curOdo(v),after=parseFloat($('#tafter').value),at=parseFloat($('#tat').value),dueD=$('#tdate').value||'';
+  const dueKm=at>0?at:after>0?cur+after:0;
+  if(!dueKm&&!dueD)return toast('Set a km or a date');
+  const old=todoEditId?db.todos.find(x=>x.id===todoEditId):null;
+  const r={v,title,notes:$('#tnote').value.trim().slice(0,200),dueKm,dueD,odo0:old&&!(after>0)?old.odo0:cur,t0:old?old.t0:nowLocal(),m:Date.now()};
+  if(old)Object.assign(old,r);else db.todos.push({id:uid(),...r});
+  vid=v;todoEditId=null;commit();svcSub='todo';tab='service';toast('Saved ✓');render();
+}
+function todoDone(id){const t=db.todos.find(x=>x.id===id);if(!t)return;svcEditId=null;svcPre={type:t.title,notes:t.notes,todo:id};vid=t.v;tab='svcform';render()}
+function delTodo(id){
+  const x=db.todos.find(y=>y.id===id);if(!x)return;
+  db.todos=db.todos.filter(y=>y.id!==id);db.deleted[id]=Date.now();commit();render();
+  toast('Removed',()=>{delete db.deleted[id];db.todos.push({...x,m:Date.now()});commit();render()});
+}
+// ----- papers: insurance, PUC, registration -----
+function setReg(id,val){const v=veh(id);v.reg=val.trim().toUpperCase().slice(0,20);v.m=Date.now();commit();toast('Saved ✓')}
+function docsHTML(){
+  const rows=docStatus(vid),latest=new Set(rows.map(r=>r.d.id)),all=db.docs.filter(d=>d.v===vid).sort((a,b)=>b.exp.localeCompare(a.exp));
+  const btn=d=>`<div style="display:flex;flex-direction:column;gap:6px"><button class="sm" onclick="docRenew('${d.id}')">↻ Renew</button><button class="sm" onclick="docEdit('${d.id}')">Edit</button><button class="sm d" onclick="delDoc('${d.id}')">✕</button></div>`;
+  return `<div class="card"><h3>🪪 Registration number · ${esc(veh(vid).name)}</h3><input value="${esc(veh(vid).reg||'')}" placeholder="e.g. TN 09 AB 1234" maxlength="20" onchange="setReg('${vid}',this.value)" style="text-transform:uppercase"></div>`+
+  `<button class="big" style="margin:0 0 14px" onclick="docEditId=null;docPre=null;tab='docform';render()">＋ Add insurance / PUC / document</button>`+
+  `<div class="card"><h3>📄 Current papers</h3>`+(rows.map(r=>`<div class="item" style="align-items:flex-start"><div style="flex:1"><b>${ICO[r.state]} ${esc(r.d.kind)}</b><br><small>${r.d.number?'No. '+esc(r.d.number)+' · ':''}${esc(r.d.provider||'')}</small>${bar(r.pct,r.state)}<small style="color:${COL[r.state]}">${r.dl<0?'Expired '+(-r.dl)+' days ago':'Valid till '+fmtDate(r.d.exp+'T00:00')+' ('+r.dl+' days left)'}</small>${r.d.cost?'<br><small>Paid '+inr(r.d.cost)+'</small>':''}${r.d.notes?'<br><small>'+esc(r.d.notes)+'</small>':''}</div>${btn(r.d)}</div>`).join('')||'<p class="note">No documents yet. Add your insurance (self / third party) and PUC so you get an expiry reminder 30 days before.</p>')+`</div>`+
+  (all.filter(d=>!latest.has(d.id)).length?`<div class="card"><h3>Past / replaced</h3>${all.filter(d=>!latest.has(d.id)).map(d=>`<div class="item"><div><b>${esc(d.kind)}</b><br><small>${d.start?fmtDate(d.start+'T00:00')+' → ':'until '}${fmtDate(d.exp+'T00:00')}${d.cost?' · '+inr(d.cost):''}</small></div><div><button class="sm" onclick="docEdit('${d.id}')">Edit</button> <button class="sm d" onclick="delDoc('${d.id}')">✕</button></div></div>`).join('')}</div>`:'');
+}
+function docFormHTML(){
+  const d=docEditId?db.docs.find(x=>x.id===docEditId):null,pre=docPre||{};
+  const x=d||{v:vid,kind:pre.kind||DOC_KINDS[0],number:'',provider:pre.provider||'',start:pre.start||today(),exp:pre.exp||'',cost:'',notes:''};
+  if(!d&&!x.exp){const m=DOC_MONTHS[DOC_KINDS.indexOf(x.kind)];if(m)x.exp=addMonths(x.start,m)}
+  return `<h3>${d?'Edit':'Add'} document</h3><div class="card">
+  <label>Vehicle</label><select id="dv">${db.vehicles.map(v=>`<option value="${v.id}" ${v.id===x.v?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
+  <label>Type</label><select id="dk" onchange="docDefaults()">${DOC_KINDS.map(k=>`<option ${k===x.kind?'selected':''}>${esc(k)}</option>`).join('')}</select>
+  <label>Policy / certificate number (optional)</label><input id="dn" maxlength="40" value="${esc(x.number)}">
+  <label>Insurer / issuing centre (optional)</label><input id="dp" maxlength="60" value="${esc(x.provider)}">
+  <div class="row"><div><label>Start / paid on</label><input id="ds" type="date" value="${x.start||''}" onchange="docDefaults()"></div><div><label>Valid till *</label><input id="de" type="date" value="${x.exp}"></div></div>
+  <label>Amount paid (₹, optional)</label><input id="dc" type="number" inputmode="decimal" step="any" value="${x.cost||''}">
+  <label>Notes (optional)</label><input id="dno" maxlength="200" value="${esc(x.notes)}"></div>
+  <button class="big" onclick="saveDoc()">Save</button><button class="big" style="background:#3b3290" onclick="docPre=null;tab='service';render()">Cancel</button>`;
+}
+function docDefaults(){
+  if(docEditId)return;
+  const m=DOC_MONTHS[DOC_KINDS.indexOf($('#dk').value)],s=$('#ds').value;
+  if(s)$('#de').value=m?addMonths(s,m):'';
+}
+function docEdit(id){docEditId=id;docPre=null;tab='docform';render()}
+function docRenew(id){const d=db.docs.find(x=>x.id===id);if(!d)return;docEditId=null;const s=d.exp>today()?d.exp:today();docPre={kind:d.kind,provider:d.provider,start:s,exp:''};vid=d.v;tab='docform';render()}
+function saveDoc(){
+  const exp=$('#de').value;if(!exp)return toast('Enter the “valid till” date');
+  const r={v:$('#dv').value,kind:$('#dk').value,number:$('#dn').value.trim(),provider:$('#dp').value.trim(),start:$('#ds').value||'',exp,cost:parseFloat($('#dc').value)||0,notes:$('#dno').value.trim().slice(0,200),m:Date.now()};
+  if(docEditId)Object.assign(db.docs.find(x=>x.id===docEditId),r);else db.docs.push({id:uid(),...r});
+  vid=r.v;docEditId=null;docPre=null;commit();svcSub='docs';tab='service';toast('Saved ✓');render();
+}
+function delDoc(id){
+  const x=db.docs.find(y=>y.id===id);if(!x)return;
+  db.docs=db.docs.filter(y=>y.id!==id);db.deleted[id]=Date.now();commit();render();
+  toast('Document removed',()=>{delete db.deleted[id];db.docs.push({...x,m:Date.now()});commit();render()});
+}
+// ----- running cost -----
+function costsHTML(){
+  const id=vid,g=scg,bs=buckets(g);
+  const sum=(arr,k,fn)=>arr.filter(x=>x.v===id&&fn(x)&&bkey(g,fn(x))===k).reduce((a,x)=>a+(x.amt??x.cost??0),0);
+  const fuelV=k=>sum(db.entries,k,e=>e.t),svcV=k=>sum(db.services,k,x=>x.t),docV=k=>sum(db.docs.map(d=>({...d,t:d.start})),k,x=>x.t);
+  const fuelT=db.entries.filter(e=>e.v===id).reduce((a,e)=>a+e.amt,0),svcT=db.services.filter(x=>x.v===id).reduce((a,x)=>a+(x.cost||0),0),docT=db.docs.filter(x=>x.v===id).reduce((a,x)=>a+(x.cost||0),0);
+  const km=stats([id],'all').km,tot=fuelT+svcT+docT;
+  const gc=`<div class="chips">${[['month','Months'],['year','Years']].map(([k,n])=>`<button class="chip ${k===g?'on':''}" onclick="scg='${k}';render()">${n}</button>`).join('')}</div>`;
+  return `<div class="card"><h3>💰 Total running cost · ${esc(veh(id).name)}</h3><div class="grid">
+  <div class="stat"><small>Fuel</small><span>${inr(fuelT)}</span></div><div class="stat"><small>Service &amp; repairs</small><span>${inr(svcT)}</span></div>
+  <div class="stat"><small>Insurance &amp; papers</small><span>${inr(docT)}</span></div><div class="stat"><small>Everything</small><span class="m">${inr(tot)}</span></div>
+  <div class="stat"><small>Fuel cost / km</small><span>${inr(km?fuelT/km:NaN,2)}</span></div><div class="stat"><small>All-in cost / km</small><span class="m">${inr(km?tot/km:NaN,2)}</span></div></div>
+  <p class="note">Cost per km uses the ${f(km,0)} km tracked from your odometer readings.</p></div>`+
+  `<div class="card"><h3>Spend over time</h3>${gc}${barChart(bs,[{name:'Fuel',color:COLORS[0],vals:bs.map(b=>fuelV(b.k))},{name:'Service',color:COLORS[1],vals:bs.map(b=>svcV(b.k))},{name:'Papers',color:COLORS[2],vals:bs.map(b=>docV(b.k))}],x=>'₹'+compact(x))}</div>`;
+}
+// ----- reminders & export -----
+async function enableNotify(){
+  if(!('Notification' in window))return toast('Not supported on this browser');
+  const p=await Notification.requestPermission();
+  if(p==='granted'){db.settings.notify=true;db.settings.notifiedDay='';persist();toast('Reminders on ✓');notifyDue()}else toast('Permission not given');
+  render();
+}
+function notifyDue(){
+  if(!db.settings.notify||!('Notification' in window)||Notification.permission!=='granted')return;
+  const day=today();if(db.settings.notifiedDay===day)return;
+  const a=alerts();if(!a.length)return;
+  db.settings.notifiedDay=day;persist();
+  const body=a.slice(0,4).map(x=>x.v.name+': '+x.txt).join('\n'),opt={body,icon:'icon-192.png',tag:'due'};
+  if(navigator.serviceWorker)navigator.serviceWorker.ready.then(r=>r.showNotification('🔧 Fuel Tracker reminders',opt)).catch(()=>{});
+}
+const csvCell=c=>'"'+String(c??'').replace(/"/g,'""')+'"';
+function exportSvcCSV(){
+  const rows=[['record','vehicle','registration','type','date','odometer_km','cost_inr','workshop','details','valid_till']];
+  for(const s of db.services.slice().sort((a,b)=>a.t.localeCompare(b.t)))rows.push(['service',veh(s.v).name,veh(s.v).reg||'',s.type,s.t.replace('T',' '),s.odo,s.cost||0,s.shop||'',s.notes||'','']);
+  for(const d of db.docs.slice().sort((a,b)=>a.exp.localeCompare(b.exp)))rows.push(['document',veh(d.v).name,veh(d.v).reg||'',d.kind,d.start||'','',d.cost||0,d.provider||'',[d.number,d.notes].filter(Boolean).join(' · '),d.exp]);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.map(r=>r.map(csvCell).join(',')).join('\n')],{type:'text/csv'}));a.download='fuel-tracker-service.csv';a.click();
+}
+function printReport(){
+  const v=veh(vid),sv=db.services.filter(s=>s.v===vid).sort((a,b)=>b.t.localeCompare(a.t)),dc=db.docs.filter(d=>d.v===vid).sort((a,b)=>b.exp.localeCompare(a.exp));
+  const tb=(h,rows)=>`<table><tr>${h.map(x=>'<th>'+x+'</th>').join('')}</tr>${rows.map(r=>'<tr>'+r.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>').join('')}</table>`;
+  $('#pr').innerHTML=`<h1>${esc(v.name)} — service history</h1><p>${v.reg?'Registration: '+esc(v.reg)+' · ':''}Odometer: ${f(curOdo(vid),0)} km · Printed ${fmtDate(Date.now())}</p><h2>Services</h2>`+
+    tb(['Date','Odometer','Work done','Workshop','Details','Cost'],sv.map(s=>[fmtDate(s.t),f(s.odo,0)+' km',s.type,s.shop||'',s.notes||'',s.cost?inr(s.cost):'']))+
+    `<h2>Insurance &amp; papers</h2>`+tb(['Type','Number','Provider','From','Valid till','Amount'],dc.map(d=>[d.kind,d.number||'',d.provider||'',d.start?fmtDate(d.start+'T00:00'):'',fmtDate(d.exp+'T00:00'),d.cost?inr(d.cost):'']));
+  document.body.classList.add('printing');
+  window.onafterprint=()=>{document.body.classList.remove('printing');$('#pr').innerHTML=''};
+  window.print();
 }
 
 function views(){
@@ -400,6 +622,8 @@ function views(){
   if(tab==='reports')return reportsHTML();
   if(tab==='service')return svcHTML();
   if(tab==='svcform')return svcFormHTML();
+  if(tab==='todoform')return todoFormHTML();
+  if(tab==='docform')return docFormHTML();
   if(tab==='history')return chips()+`<div class="card">${db.entries.filter(e=>e.v===vid).sort((a,b)=>b.t.localeCompare(a.t)).map(e=>`<div class="item"><div><b>${inr(e.amt,2)}</b> · ${f(e.l,2)} L <small>@ ${inr(e.amt/e.l,2)}</small><br><small>${new Date(e.t).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})}${e.odo?' · '+f(e.odo,0)+' km':''}${e.fuel&&e.fuel!==FUELS[0]?' · '+esc(e.fuel):''}</small></div><div><button class="sm" onclick="edit('${e.id}')">Edit</button> <button class="sm d" onclick="del('${e.id}')">✕</button></div></div>`).join('')||'<p class="note">No entries yet.</p>'}</div>`;
   return settings();
 }
@@ -447,8 +671,8 @@ function rmVeh(id){
   if(db.vehicles.length<2)return toast('Keep at least one');
   if(!confirm('Remove this vehicle and all its fuel entries and service records?'))return;
   const now=Date.now();db.deleted[id]=now;
-  for(const x of [...db.entries,...db.services])if(x.v===id)db.deleted[x.id]=now;
-  db.vehicles=db.vehicles.filter(v=>v.id!==id);db.entries=db.entries.filter(e=>e.v!==id);db.services=db.services.filter(x=>x.v!==id);
+  for(const x of [...db.entries,...db.services,...db.todos,...db.docs])if(x.v===id)db.deleted[x.id]=now;
+  db.vehicles=db.vehicles.filter(v=>v.id!==id);db.entries=db.entries.filter(e=>e.v!==id);db.services=db.services.filter(x=>x.v!==id);db.todos=db.todos.filter(x=>x.v!==id);db.docs=db.docs.filter(x=>x.v!==id);
   vid=db.vehicles[0].id;rv='all';commit();render();
 }
 function mark(kind){
@@ -478,18 +702,18 @@ function mergeData(a,b){
     return[...m.values()].filter(x=>!(dead[x.id]>(x.m||0)));
   };
   const vehicles=pick(a.vehicles,b.vehicles),ok=new Set(vehicles.map(v=>v.id));
-  return{vehicles,entries:pick(a.entries,b.entries).filter(e=>ok.has(e.v)),services:pick(a.services,b.services).filter(x=>ok.has(x.v)),deleted:dead};
+  return{vehicles,entries:pick(a.entries,b.entries).filter(e=>ok.has(e.v)),services:pick(a.services,b.services).filter(x=>ok.has(x.v)),todos:pick(a.todos,b.todos).filter(x=>ok.has(x.v)),docs:pick(a.docs,b.docs).filter(x=>ok.has(x.v)),deleted:dead};
 }
 function mergeInto(c){
-  const snap=()=>JSON.stringify([db.vehicles,db.entries,db.services]),before=snap(),m=mergeData(db,c);
+  const snap=()=>JSON.stringify([db.vehicles,db.entries,db.services,db.todos,db.docs]),before=snap(),m=mergeData(db,c);
   if(m.vehicles.length)db.vehicles=m.vehicles;
-  db.entries=m.entries;db.services=m.services;db.deleted=m.deleted;
+  db.entries=m.entries;db.services=m.services;db.todos=m.todos;db.docs=m.docs;db.deleted=m.deleted;
   if(!db.vehicles.some(v=>v.id===vid))vid=db.vehicles[0].id;
   if(rv!=='all'&&!db.vehicles.some(v=>v.id===rv))rv='all';
   const changed=snap()!==before;if(changed)save();else persist();
   return changed;
 }
-const formTab=()=>['add','edit','svcform'].includes(tab);
+const formTab=()=>['add','edit','svcform','todoform','docform'].includes(tab);
 async function findGist(){
   for(let p=1;p<=5;p++){
     const l=await gh('/gists?per_page=100&page='+p);
@@ -560,7 +784,7 @@ async function pullGist(){
       db.settings.gistId=id;
     }
     const c=await fetchCloud();
-    if(!db.entries.length&&!db.services.length){
+    if(!db.entries.length&&!db.services.length&&!db.todos.length&&!db.docs.length){
       c.settings={...c.settings,...db.settings};db=c;vid=db.vehicles[0].id;save();mark('lastPull');render();toast('Restored '+db.entries.length+' entries ☁');
     }else{
       mergeInto(c);mark('lastPull');render();toast('Synced ☁');pushGist(true);
@@ -569,18 +793,20 @@ async function pullGist(){
 }
 function render(){
   $('#app').innerHTML=views();$('#app').className=tab==='add'?'home':'';
-  $('#nav').innerHTML=[['add','＋','Add'],['stats','📊','Stats'],['reports','💰','Spends'],['history','🧾','History'],['service','🔧','Service'],['settings','⚙️','Backup']].map(([k,i,n])=>`<button class="${(tab===k||(tab==='edit'&&k==='history')||(tab==='svcform'&&k==='service'))?'on':''}" onclick="tab='${k}';render()"><b>${i}</b>${n}</button>`).join('');
+  $('#nav').innerHTML=[['add','＋','Add'],['stats','📊','Stats'],['reports','💰','Spends'],['history','🧾','History'],['service','🔧','Service'],['settings','⚙️','Backup']].map(([k,i,n])=>`<button class="${(tab===k||(tab==='edit'&&k==='history')||(['svcform','todoform','docform'].includes(tab)&&k==='service'))?'on':''}" onclick="tab='${k}';render()"><b>${i}</b>${n}</button>`).join('');
 }
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible')return;
-  checkCloud();
+  checkCloud();notifyDue();
   // keep the auto date/time fresh if the form is still empty
   if(tab==='add'&&!$('#amt').value&&!$('#l').value)render();
 });
 render();
 checkCloud();
+notifyDue();
+cleanPhotos();
 </script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 // Network-first so updates arrive quickly; cached copy is used when offline.
-const CACHE = 'fuel-tracker-v1';
+const CACHE = 'fuel-tracker-v2';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
