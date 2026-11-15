@@ -272,7 +272,7 @@ function del(id){if(confirm('Delete this entry?')){db.entries=db.entries.filter(
 function edit(id){editId=id;vid=db.entries.find(x=>x.id===id).v;tab='edit';render()}
 
 function views(){
-  if(tab==='add')return banner()+chips()+formHTML()+`<button class="big" onclick="add()">＋ Add fill-up</button>`+quick();
+  if(tab==='add')return welcome()+banner()+chips()+formHTML()+`<button class="big" onclick="add()">＋ Add fill-up</button>`+quick();
   if(tab==='edit'){const e=db.entries.find(x=>x.id===editId);return `<h3>Edit entry · ${veh(e.v).icon} ${veh(e.v).name}</h3>`+formHTML(e)+`<button class="big" onclick="saveEdit()">Save changes</button><button class="big" style="background:#3b3290" onclick="tab='history';render()">Cancel</button>`}
   if(tab==='stats'){
     const lbl=period==='all'?'Till date':'This '+period;
@@ -310,7 +310,7 @@ function settings(){
   <input id="imp" type="file" accept=".json" class="hide" onchange="importFile(this.files[0])">
   <p class="note">The file is always named <b>fuel-tracker-backup.json</b> and contains the save date inside. Do this only about once a month so you don't collect many files. In Google Drive choose <b>Replace</b>/“new version” when asked, or delete the older copy. Android may add “(1)” to repeated downloads — delete the old ones.</p></div>
   <div class="card"><h3>📱 New phone / lost data? Restore in 1 minute</h3>
-  <p class="note"><b>Option A — from GitHub (easiest)</b><br>1. Open the app link in Chrome and add it to the home screen.<br>2. Go to Backup tab → GitHub card.<br>3. Create a new token (steps above) or use your saved one, and paste it. The Gist ID can be left empty.<br>4. Tap <b>Restore from GitHub</b>, then OK.<br>5. Check History and Stats. Then turn on Auto-upload again.<br><br><b>Option B — from a file</b><br>1. Copy <b>fuel-tracker-backup.json</b> from Google Drive to the phone (Drive app → ⋮ → Download).<br>2. Backup tab → <b>Restore from file</b> → choose it → OK.<br><br>Restore replaces all data on the phone with the backup, so do it on a fresh install.</p></div>
+  <p class="note"><b>Option A — from GitHub (easiest)</b><br>1. Open the app link in Chrome and add it to the home screen.<br>2. Go to Backup tab → GitHub card.<br>3. On the <b>Add</b> screen, paste your token in the “Already used this app before?” box and tap <b>Restore my data</b>. Everything comes back automatically (create a new token with the steps above if you lost the old one).<br>4. Check History and Stats, then turn on Auto-upload again in the Backup tab.<br>While you use the app on two phones, it also asks to load newer GitHub data when you open it.<br><br><b>Option B — from a file</b><br>1. Copy <b>fuel-tracker-backup.json</b> from Google Drive to the phone (Drive app → ⋮ → Download).<br>2. Backup tab → <b>Restore from file</b> → choose it → OK.<br><br>Restore replaces all data on the phone with the backup, so do it on a fresh install.</p></div>
   <div class="card"><h3>📖 How to keep your data safe</h3>
   <p class="note"><b>Where is my data?</b> Only inside this browser on this phone. The website itself stores nothing, so there is no server copy unless you back up.</p>
   <p class="note"><b>Do</b><br>• Back up once a week (e.g. every Sunday) and after adding many entries. The status card above shows when you last did it.<br>• Best: turn on GitHub auto-upload so every entry is saved automatically (needs the token below).<br>• Also save a file to Google Drive now and then, as a second copy.<br>• Keep just one or two Drive files (replace the old one) instead of many.<br>• Use the same browser (Chrome) and the home-screen icon each time.</p>
@@ -335,6 +335,18 @@ function statusHTML(){
   const msg=!db.entries.length?'No entries yet.':ok?'✅ All entries are backed up.':!lb?'⚠️ You have never backed up. Do it now.':dirty()?'⚠️ You have entries that are not backed up yet.':'⚠️ Last backup is over a week old.';
   return `<div class="card"><h3>Backup status</h3><p style="margin:0 0 8px;font-weight:700">${msg}</p>
   <div class="note">📁 Last file backup: ${when(db.settings.lastFile)}<br>☁ Last GitHub backup: ${when(db.settings.lastCloud)}</div></div>`;
+}
+const welcome=()=>db.entries.length||db.settings.token?'':`<div class="card"><h3>👋 Already used this app before?</h3><p class="note">Paste your GitHub token to bring back all your entries automatically. Skip this if you're new.</p><input id="wt" type="password" placeholder="ghp_..."><button class="big" style="font-size:17px;padding:14px;margin-top:10px" onclick="quickRestore()">☁ Restore my data</button></div>`;
+async function quickRestore(){const t=$('#wt').value.trim();if(!t)return toast('Paste the token first');db.settings.token=t;save();await pullGist(true);if(!db.entries.length){delete db.settings.token;save();render()}}
+async function checkCloud(){
+  if(!db.settings.token||!db.settings.gistId||!navigator.onLine)return;
+  try{
+    const g=await gh('/gists/'+db.settings.gistId);
+    const d=JSON.parse(g.files['fuel-tracker.json'].content);
+    if((d.updated||0)>(db.updated||0)&&confirm('Newer data found in your GitHub backup ('+(d.entries||[]).length+' entries). Load it? This replaces the data on this phone.')){
+      d.settings={...db.settings,...d.settings};db=d;vid=db.vehicles[0].id;save();mark('lastPull');render();toast('Loaded latest ☁');
+    }
+  }catch{}
 }
 const banner=()=>{const lb=lastBackup();return db.entries.length&&(!lb&&db.entries.length>=3||lb&&dirty()&&Date.now()-lb>7*864e5)?`<div class="card" style="background:#7c2d12;padding:12px" onclick="tab='settings';render()">⚠️ ${lb?'Last backup: '+when(lb):'No backup yet'} — tap to back up</div>`:''};
 const clean=()=>{const {token,...s}=db.settings;return{...db,settings:s,exportedAt:Date.now()}};
@@ -368,7 +380,7 @@ async function pushGist(silent){
     mark('lastCloud');toast('Uploaded ☁');if(tab==='settings')render();
   }catch(e){toast('Upload failed ('+e.message+')')}
 }
-async function pullGist(){
+async function pullGist(auto){
   if(!db.settings.token)return toast('Paste your token first');
   try{
     if(!db.settings.gistId){
@@ -379,7 +391,7 @@ async function pullGist(){
     }
     const g=await gh('/gists/'+db.settings.gistId);
     const d=JSON.parse(g.files['fuel-tracker.json'].content);
-    if(!confirm('Replace data on this phone with the cloud backup ('+(d.entries||[]).length+' entries, last saved '+new Date(d.updated||0).toLocaleString()+')?'))return;
+    if(!(auto&&!db.entries.length)&&!confirm('Replace data on this phone with the cloud backup ('+(d.entries||[]).length+' entries, last saved '+new Date(d.updated||0).toLocaleString()+')?'))return;
     d.settings={...db.settings,...d.settings};db=d;vid=db.vehicles[0].id;save();mark('lastPull');render();toast('Downloaded ☁');
   }catch(e){toast('Download failed ('+e.message+')')}
 }
@@ -389,6 +401,7 @@ function render(){
 }
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
 render();
+checkCloud();
 </script>
 </body>
 </html>
