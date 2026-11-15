@@ -296,20 +296,24 @@ function settings(){
   return `<div class="card"><h3>Vehicles</h3>${db.vehicles.map(v=>`<div class="item"><span>${v.icon}</span><input value="${v.name.replace(/"/g,'&quot;')}" onchange="renVeh('${v.id}',this.value)" style="flex:2"><input type="number" value="${vmax(v)}" title="Chart max km/L" onchange="maxVeh('${v.id}',this.value)" style="flex:1"><button class="sm d" onclick="rmVeh('${v.id}')">✕</button></div>`).join('')}<p class="note">Edit the name, and the chart max (best km/L) in the number box.</p>
   <div class="row" style="margin-top:10px"><input id="vn" placeholder="New vehicle name"><button class="sm" style="flex:0 0 80px" onclick="addVeh()">Add</button></div></div>
   ${statusHTML()}
-  <div class="card"><h3>1 · Backup to file / Google Drive</h3>
+  <div class="card"><h3>1 · GitHub auto-backup (recommended)</h3>
+  <p class="note">One file in a private Gist, overwritten on every upload. GitHub keeps older versions, so there is no pile of files.</p>
+  <p class="note"><b>One-time setup</b><br>1. Open <a style="color:#22d3ee" href="https://github.com/settings/tokens/new" target="_blank">github.com/settings/tokens/new</a> (classic token).<br>2. Name: fuel tracker · Expiry: 1 year · tick <b>only “gist”</b>.<br>3. Generate, copy the token (starts with ghp_). It is shown only once.<br>4. Paste it below, tap <b>Upload</b>.<br>5. Turn on <b>Auto-upload</b>. Done. Check “Last GitHub backup” above.</p>
+  <label>Personal access token</label><input id="tok" type="password" value="${s.token||''}" onchange="setS('token',this.value.trim())">
+  <label>Gist ID (filled automatically; optional when restoring)</label><input id="gid" value="${s.gistId||''}" onchange="setS('gistId',this.value.trim())">
+  <div class="row" style="margin-top:10px"><button class="sm" onclick="pushGist()">☁ Upload now</button><button class="sm" onclick="pullGist()">☁ Restore from GitHub</button></div>
+  <label><input type="checkbox" style="width:auto" ${s.autoBackup?'checked':''} onchange="setS('autoBackup',this.checked)"> Auto-upload after each entry</label>
+  <p class="note">The token stays on this phone only and is never in backup files.</p></div>
+  <div class="card"><h3>2 · File backup (occasional extra copy)</h3>
   <div class="row"><button class="sm" onclick="exportFile(true)">📤 Save to Drive / Share</button><button class="sm" onclick="exportFile()">⬇ Download</button></div>
   <div class="row" style="margin-top:8px"><button class="sm" onclick="$('#imp').click()">⬆ Restore from file</button><button class="sm" onclick="exportCSV()">📄 CSV (Excel)</button></div>
   <input id="imp" type="file" accept=".json" class="hide" onchange="importFile(this.files[0])">
-  <p class="note">Tap <b>Save to Drive / Share</b> and pick Google Drive. The file is named with the date and time (e.g. fuel-tracker-2026-11-14_2130.json). Restore replaces everything in the app with that file.</p></div>
-  <div class="card"><h3>GitHub sync (private Gist)</h3>
-  <label>Personal access token (scope: gist)</label><input id="tok" type="password" value="${s.token||''}" onchange="setS('token',this.value.trim())">
-  <label>Gist ID (auto-filled after first upload)</label><input id="gid" value="${s.gistId||''}" onchange="setS('gistId',this.value.trim())">
-  <div class="row" style="margin-top:10px"><button class="sm" onclick="pushGist()">☁ Upload</button><button class="sm" onclick="pullGist()">☁ Download</button></div>
-  <label><input type="checkbox" style="width:auto" ${s.autoBackup?'checked':''} onchange="setS('autoBackup',this.checked)"> Auto-upload after each entry</label>
-  <p class="note">The token stays on this device only (never in exports). Data is always kept locally too.</p></div>
+  <p class="note">The file is always named <b>fuel-tracker-backup.json</b> and contains the save date inside. Do this only about once a month so you don't collect many files. In Google Drive choose <b>Replace</b>/“new version” when asked, or delete the older copy. Android may add “(1)” to repeated downloads — delete the old ones.</p></div>
+  <div class="card"><h3>📱 New phone / lost data? Restore in 1 minute</h3>
+  <p class="note"><b>Option A — from GitHub (easiest)</b><br>1. Open the app link in Chrome and add it to the home screen.<br>2. Go to Backup tab → GitHub card.<br>3. Create a new token (steps above) or use your saved one, and paste it. The Gist ID can be left empty.<br>4. Tap <b>Restore from GitHub</b>, then OK.<br>5. Check History and Stats. Then turn on Auto-upload again.<br><br><b>Option B — from a file</b><br>1. Copy <b>fuel-tracker-backup.json</b> from Google Drive to the phone (Drive app → ⋮ → Download).<br>2. Backup tab → <b>Restore from file</b> → choose it → OK.<br><br>Restore replaces all data on the phone with the backup, so do it on a fresh install.</p></div>
   <div class="card"><h3>📖 How to keep your data safe</h3>
   <p class="note"><b>Where is my data?</b> Only inside this browser on this phone. The website itself stores nothing, so there is no server copy unless you back up.</p>
-  <p class="note"><b>Do</b><br>• Back up once a week (e.g. every Sunday) and after adding many entries. The status card above shows when you last did it.<br>• Best: turn on GitHub auto-upload so every entry is saved automatically (needs the token below).<br>• Also save a file to Google Drive now and then, as a second copy.<br>• Keep the Drive file; newer files have the date in the name.<br>• Use the same browser (Chrome) and the home-screen icon each time.</p>
+  <p class="note"><b>Do</b><br>• Back up once a week (e.g. every Sunday) and after adding many entries. The status card above shows when you last did it.<br>• Best: turn on GitHub auto-upload so every entry is saved automatically (needs the token below).<br>• Also save a file to Google Drive now and then, as a second copy.<br>• Keep just one or two Drive files (replace the old one) instead of many.<br>• Use the same browser (Chrome) and the home-screen icon each time.</p>
   <p class="note"><b>Don't</b><br>• ❌ Don't clear browser data / cache / "site data" for Chrome. That wipes all entries.<br>• ❌ Don't use "Clear storage" in Android Settings → Apps → Chrome.<br>• ❌ Don't use Incognito/Private tabs. Nothing is saved there.<br>• ❌ Don't uninstall Chrome or the home-screen shortcut without a backup first.<br>• ❌ Don't restore an old file by mistake. It replaces newer entries.<br>• ❌ Don't share your GitHub token with anyone.</p>
   <p class="note"><b>New phone or lost data?</b> Open the app, go to Backup, then either Restore from file (choose your Drive file) or add your token + Gist ID and tap Download.</p></div>`;
 }
@@ -333,10 +337,9 @@ function statusHTML(){
   <div class="note">📁 Last file backup: ${when(db.settings.lastFile)}<br>☁ Last GitHub backup: ${when(db.settings.lastCloud)}</div></div>`;
 }
 const banner=()=>{const lb=lastBackup();return db.entries.length&&(!lb&&db.entries.length>=3||lb&&dirty()&&Date.now()-lb>7*864e5)?`<div class="card" style="background:#7c2d12;padding:12px" onclick="tab='settings';render()">⚠️ ${lb?'Last backup: '+when(lb):'No backup yet'} — tap to back up</div>`:''};
-const clean=()=>{const {token,...s}=db.settings;return{...db,settings:s}};
+const clean=()=>{const {token,...s}=db.settings;return{...db,settings:s,exportedAt:Date.now()}};
 async function exportFile(share){
-  const d=new Date(),pad=n=>String(n).padStart(2,'0');
-  const name='fuel-tracker-'+d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+'.json';
+  const name='fuel-tracker-backup.json';
   const blob=new Blob([JSON.stringify(clean(),null,2)],{type:'application/json'});
   const file=new File([blob],name,{type:'application/json'});
   if(share&&navigator.canShare&&navigator.canShare({files:[file]})){
@@ -349,7 +352,7 @@ async function exportFile(share){
 }
 function importFile(file){
   if(!file)return;const r=new FileReader();
-  r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.vehicles||!d.entries)throw 0;if(!confirm('Replace current data with this file?'))return;d.settings={...db.settings,...(d.settings||{})};db=d;vid=db.vehicles[0].id;save();mark('lastImport');render();toast('Imported ✓')}catch{toast('Invalid file')}};
+  r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.vehicles||!d.entries)throw 0;if(!confirm('Replace current data with this backup ('+d.entries.length+' entries'+(d.exportedAt?', saved '+new Date(d.exportedAt).toLocaleString():'')+')?'))return;d.settings={...db.settings,...(d.settings||{})};db=d;vid=db.vehicles[0].id;save();mark('lastImport');render();toast('Imported ✓')}catch{toast('Invalid file')}};
   r.readAsText(file);
 }
 async function gh(url,opt){
@@ -366,11 +369,17 @@ async function pushGist(silent){
   }catch(e){toast('Upload failed ('+e.message+')')}
 }
 async function pullGist(){
-  if(!db.settings.token||!db.settings.gistId)return toast('Need token & Gist ID');
+  if(!db.settings.token)return toast('Paste your token first');
   try{
+    if(!db.settings.gistId){
+      const list=await gh('/gists?per_page=100');
+      const hit=list.find(x=>x.files&&x.files['fuel-tracker.json']);
+      if(!hit)return toast('No Fuel Tracker backup found in this account');
+      db.settings.gistId=hit.id;
+    }
     const g=await gh('/gists/'+db.settings.gistId);
     const d=JSON.parse(g.files['fuel-tracker.json'].content);
-    if(!confirm('Replace local data with cloud copy?'))return;
+    if(!confirm('Replace data on this phone with the cloud backup ('+(d.entries||[]).length+' entries, last saved '+new Date(d.updated||0).toLocaleString()+')?'))return;
     d.settings={...db.settings,...d.settings};db=d;vid=db.vehicles[0].id;save();mark('lastPull');render();toast('Downloaded ☁');
   }catch(e){toast('Download failed ('+e.message+')')}
 }
